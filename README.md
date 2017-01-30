@@ -21,4 +21,4 @@ Usage
 - Use up/down arrows to move in both sides at the same time
 - Use b/v to move inside the diff buffer at the bottom
 
-![smbcmp demo](https://framapic.org/JAepoOnnSQed/5p6SMS4uUgJn.gif)
+![smbcmp demo](https://framapic.org/h65lq3Goa4MR/RPpeIdHAZybS.gif)
