@@ -20,5 +20,7 @@ Usage
   left and right side.
 - Use up/down arrows to move in both sides at the same time
 - Use b/v to move inside the diff buffer at the bottom
+- Use PgUp/PgDown to change the height of the top (side-to-side
+  traces) and bottom (diff) panels
 
 ![smbcmp demo](https://framapic.org/h65lq3Goa4MR/RPpeIdHAZybS.gif)

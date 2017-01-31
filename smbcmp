@@ -172,9 +172,10 @@ def curses_main(stdscr):
 
     H = curses.LINES
     W = curses.COLS
+    th_ratio = .5
     lw = (W-1)//2
     rw = W-1-lw
-    th = (H-1)//2
+    th = int((H-1)*th_ratio)
     bh = H-1-th
 
     # h, w, y, x
@@ -186,7 +187,7 @@ def curses_main(stdscr):
 
     bwin = curses.newwin(bh, W, th+1, 0)
     bbuf = BufferViewer(bwin, "", diff=True)
-
+    resize = False
 
     while True:
         stdscr.refresh()
@@ -219,6 +220,13 @@ def curses_main(stdscr):
         elif k == 'b':
             bbuf.move(-1)
 
+        elif k == 'KEY_PPAGE':
+            th_ratio += -.1
+            resize = True
+        elif k == 'KEY_NPAGE':
+            th_ratio += +.1
+            resize = True
+
         elif k == 'KEY_DOWN':
             lbuf.move(+1)
             rbuf.move(+1)
@@ -227,16 +235,22 @@ def curses_main(stdscr):
             rbuf.move(-1)
 
         elif k == 'KEY_RESIZE':
+            resize = True
+
+
+        if resize:
             H, W = stdscr.getmaxyx()
             lw = (W-1)//2
             rw = W-1-lw
-            th = (H-1)//2
+            th = int((H-1)*th_ratio)
             bh = H-1-th
             lwin.resize(th, lw)
             rwin.resize(th, rw)
             rwin.mvwin(0, lw+1)
             bwin.resize(bh, W)
             bwin.mvwin(th+1, 0)
+            resize = False
+
 
         if lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket:
             bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
