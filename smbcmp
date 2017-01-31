@@ -159,12 +159,7 @@ class TraceViewer(object):
     def refresh(self):
         self.buf.refresh()
 
-def curses_main(stdscr):
-    ap = argparse.ArgumentParser(description='compare smb packets')
-    ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
-    ap.add_argument('fileb', metavar='CAPFILE2:NO', help='second file/packet number')
-    args = ap.parse_args()
-
+def curses_main(stdscr, args):
     curses.curs_set(0)
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
@@ -257,4 +252,8 @@ def curses_main(stdscr):
 
 if __name__ == '__main__':
     #main()
-    curses.wrapper(curses_main)
+    ap = argparse.ArgumentParser(description='compare smb packets')
+    ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
+    ap.add_argument('fileb', metavar='CAPFILE2:NO', help='second file/packet number')
+    args = ap.parse_args()
+    curses.wrapper(curses_main, args)
