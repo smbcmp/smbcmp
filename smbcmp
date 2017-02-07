@@ -23,6 +23,17 @@ import tempfile
 import curses
 import os
 
+
+TSHARK_FILTER_FLAG = None
+
+def set_filter_flag():
+    global TSHARK_FILTER_FLAG
+    out = subprocess.check_output(['tshark', '-h']).decode('utf-8')
+    if '-Y' in out:
+        TSHARK_FILTER_FLAG = '-Y'
+    else:
+        TSHARK_FILTER_FLAG = '-R'
+
 def strip_packet_no(arg):
     try:
         i = arg.rindex(":")
@@ -41,7 +52,8 @@ def split_packet_arg(arg):
 
 
 def smb_summaries(pcap):
-    out = subprocess.check_output(['tshark', '-r', pcap, '-Y', '!browser && (smb||smb2)']).decode('utf-8')
+    out = subprocess.check_output(['tshark', '-r', pcap,
+                                   TSHARK_FILTER_FLAG, '!browser && (smb||smb2)']).decode('utf-8')
     pkts = {}
     for line in out.split('\n'):
         m = re.match(r'''\s*(\d+).+?SMB2?\s*\d+\s*(.+)''', line)
@@ -50,7 +62,8 @@ def smb_summaries(pcap):
     return pkts
 
 def smb_packet(pcap, no):
-    out = subprocess.check_output(['tshark', '-r', pcap, '-Y', 'frame.number == %d'%no, '-V']).decode('utf-8')
+    out = subprocess.check_output(['tshark', '-r', pcap,
+                                   TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V']).decode('utf-8')
     out = re.sub(r'^[\s\S]+\nSMB', 'SMB', out, re.S)
     return out
 
@@ -256,4 +269,5 @@ if __name__ == '__main__':
     ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
     ap.add_argument('fileb', metavar='CAPFILE2:NO', help='second file/packet number')
     args = ap.parse_args()
+    set_filter_flag()
     curses.wrapper(curses_main, args)
