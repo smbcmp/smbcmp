@@ -54,7 +54,8 @@ def split_packet_arg(arg):
 @functools.lru_cache(maxsize=128)
 def smb_summaries(pcap):
     out = subprocess.check_output(['tshark', '-r', pcap,
-                                   TSHARK_FILTER_FLAG, '!browser && (smb||smb2)']).decode('utf-8')
+                                   TSHARK_FILTER_FLAG,
+                                   '!browser && (smb||smb2)']).decode('utf-8')
     pkts = {}
     for line in out.split('\n'):
         m = re.match(r'''\s*(\d+).+?SMB2?\s*\d+\s*(.+)''', line)
@@ -65,7 +66,8 @@ def smb_summaries(pcap):
 @functools.lru_cache(maxsize=128)
 def smb_packet(pcap, no):
     out = subprocess.check_output(['tshark', '-r', pcap,
-                                   TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V']).decode('utf-8')
+                                   TSHARK_FILTER_FLAG,
+                                   'frame.number == %d'%no, '-V']).decode('utf-8')
     out = re.sub(r'^[\s\S]+\nSMB', 'SMB', out, re.S)
     return out
 
