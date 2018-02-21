@@ -78,14 +78,6 @@ def smb_diff(a, b):
                                  a[0], b[0], lineterm="")
     return "\n".join(lines)
 
-def main():
-    ap = argparse.ArgumentParser(description='compare smb packets')
-    ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
-    ap.add_argument('fileb', metavar='CAPFILE2:NO', help='second file/packet number')
-    args = ap.parse_args()
-
-    smb_diff(split_packet_arg(args.filea), split_packet_arg(args.fileb))
-
 class BufferViewer(object):
     def __init__(self, win, data, hl=True, diff=False):
         self.win = win
@@ -171,7 +163,81 @@ class TraceViewer(object):
     def refresh(self):
         self.buf.refresh()
 
-def curses_main(stdscr, args):
+def single_view_main(stdscr, args):
+    curses.curs_set(0)
+    curses.use_default_colors()
+
+    H = curses.LINES
+    W = curses.COLS
+    th_ratio = .5
+    th = int((H-1)*th_ratio)
+    bh = H-1-th
+
+    twin = curses.newwin(th, W, 0, 0)
+    tbuf = TraceViewer(twin, strip_packet_no(args.filea))
+
+    bwin = curses.newwin(bh, W, th+1, 0)
+    bbuf = BufferViewer(bwin, "")
+    resize = False
+    bbuf.set_data(smb_packet(*tbuf.get_packet()))
+
+    while True:
+        stdscr.refresh()
+        tbuf.refresh()
+        bbuf.refresh()
+
+        # y, x, ch, length
+        stdscr.hline(th, 0, 0, W)
+
+        last_packet = tbuf.get_packet()[1]
+
+        k = stdscr.getkey()
+        if k == 'q':
+            return
+
+        elif k == 'j':
+            tbuf.move(+1)
+        elif k == 'k':
+            tbuf.move(-1)
+
+        elif k == 'd':
+            tbuf.move(+1)
+        elif k == 'f':
+            tbuf.move(-1)
+
+        elif k == 'v':
+            bbuf.move(+1)
+        elif k == 'b':
+            bbuf.move(-1)
+
+        elif k == 'KEY_PPAGE':
+            th_ratio += -.1
+            resize = True
+        elif k == 'KEY_NPAGE':
+            th_ratio += +.1
+            resize = True
+
+        elif k == 'KEY_DOWN':
+            tbuf.move(+1)
+        elif k == 'KEY_UP':
+            tbuf.move(-1)
+
+        elif k == 'KEY_RESIZE':
+            resize = True
+
+        if resize:
+            H, W = stdscr.getmaxyx()
+            th = int((H-1)*th_ratio)
+            bh = H-1-th
+            twin.resize(th, W)
+            bwin.resize(bh, W)
+            bwin.mvwin(th+1, 0)
+            resize = False
+
+        if tbuf.get_packet()[1] != last_packet:
+            bbuf.set_data(smb_packet(*tbuf.get_packet()))
+
+def diff_view_main(stdscr, args):
     curses.curs_set(0)
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
@@ -264,10 +330,12 @@ def curses_main(stdscr, args):
             bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
 
 if __name__ == '__main__':
-    #main()
     ap = argparse.ArgumentParser(description='compare smb packets')
     ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
-    ap.add_argument('fileb', metavar='CAPFILE2:NO', help='second file/packet number')
+    ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO', help='second file/packet number')
     args = ap.parse_args()
     set_filter_flag()
-    curses.wrapper(curses_main, args)
+    if args.fileb:
+        curses.wrapper(diff_view_main, args)
+    else:
+        curses.wrapper(single_view_main, args)
