@@ -25,11 +25,13 @@ import os
 import functools
 import difflib
 import configparser
+import binascii
 
 TSHARK_FILTER_FLAG = None
 DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
 KEY = {}
 CONF = configparser.ConfigParser()
+CRYPTO_KEY = {}
 
 def load_config(fn):
     CONF.read(fn)
@@ -45,15 +47,31 @@ def load_config(fn):
     k('bwin_prev', 'n')
     k('vsplit_up', 'KEY_PPAGE')
     k('vsplit_down', 'KEY_NPAGE')
-    set_filter_flag()
 
-def set_filter_flag():
+def wireshark_checks(args):
+    try:
+        out = subprocess.check_output(tshark('-h')).decode('utf-8')
+    except:
+        print("Can't run tshark, check if installed properly")
+        raise
+
+    if 'wireshark' not in out:
+        raise Exception("Unexpected tshark out, check if installed properly")
+
     global TSHARK_FILTER_FLAG
-    out = subprocess.check_output(tshark('-h')).decode('utf-8')
     if '-Y' in out:
         TSHARK_FILTER_FLAG = '-Y'
     else:
         TSHARK_FILTER_FLAG = '-R'
+
+    if args.key:
+        try:
+            out = subprocess.check_output(tshark('-ouat:smb2_seskey_list:ffffffffffffffff'+
+                                                 ',ffffffffffffffffffffffffffffffff',
+                                                 '-v')).decode('utf-8')
+        except:
+            print("your version of tshark doesn't support decryption")
+            raise
 
 def strip_packet_no(arg):
     try:
@@ -71,6 +89,38 @@ def split_packet_arg(arg):
     except Exception:
         raise Exception("invalid packet:no specified")
 
+def extract_kernel_keys(log):
+    r = {}
+    last_id = None
+    last_key = None
+    rx = re.compile(r'''(?:Session Id\s+((?: [a-f0-9]{2})+))|(?:Session Key\s+((?: [a-f0-9]{2})+))''')
+    for m in rx.finditer(log):
+        if m.group(1):
+            last_id = hex_to_bytes(m.group(1))
+        elif m.group(2):
+            last_key = hex_to_bytes(m.group(2))
+            r[last_id] = last_key
+            last_key = last_id = None
+    return r
+
+def load_crypto_keys(args):
+    # try dmesg
+    try:
+        dmesg = subprocess.check_output(["dmesg"]).decode("utf-8")
+        CRYPTO_KEY.update(extract_kernel_keys(dmesg))
+    except Exception as e:
+        pass
+
+    for kp in args.key:
+        m = re.match(r'''^([a-f0-9]+),([a-f0-9]+)$''', kp)
+        if m:
+            sid = hex_to_bytes(m.group(1))
+            skey = hex_to_bytes(m.group(2))
+            CRYPTO_KEY[sid] = skey
+        elif os.path.exists(kp):
+            CRYPTO_KEY.update(extract_kernel_keys(open(kp).read()))
+        else:
+            raise Exception("<%s> is neither a file nor a hex SID,KEY string"%kp)
 
 def diff_split(w, h, vratio):
     lw = (w-1)//2
@@ -88,9 +138,24 @@ def tshark(*args):
     binpath = CONF['global'].get('tshark_path', 'tshark')
     return [binpath] + list(args)
 
+def bytes_to_hex(b):
+    return binascii.hexlify(b).decode('ascii')
+
+def hex_to_bytes(h):
+    return binascii.unhexlify(h.replace(' ', ''))
+
+def tshark_keys_opts():
+    r = []
+    for (sid, skey) in CRYPTO_KEY.items():
+        opt = "-ouat:smb2_seskey_list:%s,%s"%(bytes_to_hex(sid), bytes_to_hex(skey))
+        r.append(opt)
+    return r
+
+
 @functools.lru_cache(maxsize=128)
 def smb_summaries(pcap):
-    cmd = tshark('-r', pcap, TSHARK_FILTER_FLAG, '!browser && (smb||smb2)')
+    cmd = tshark(*tshark_keys_opts())
+    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, '!browser && (smb||smb2)']
     out = subprocess.check_output(cmd).decode('utf-8')
     pkts = {}
     for line in out.split('\n'):
@@ -101,7 +166,8 @@ def smb_summaries(pcap):
 
 @functools.lru_cache(maxsize=128)
 def smb_packet(pcap, no):
-    cmd = tshark('-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V')
+    cmd = tshark(*tshark_keys_opts())
+    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V']
     out = subprocess.check_output(cmd).decode('utf-8')
     out = re.sub(r'^[\s\S]+\nSMB', 'SMB', out, re.S)
     return out
@@ -365,8 +431,13 @@ def diff_view_main(stdscr, args):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='compare smb packets')
-    ap.add_argument('--config', '-c',
-                    help='read alternative config file')
+    ap.add_argument('-c', '--config',
+                    help='read alternative config file (default %s)'%DEFAULT_CONFIG)
+    ap.add_argument('-k', '--key', metavar='KEYPAIR',
+                    default=[], action='append',
+                    help='either a path to a kernel log file to extract keys from ('+
+                    'needs CONFIG_CIFS_DEBUG_KEYS enabled) or literal session '+
+                    'id & key pair given in hex (as SESSID,KEY)')
     ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
     ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO',
                     help='second file/packet number (diff mode)')
@@ -376,6 +447,9 @@ if __name__ == '__main__':
         load_config(args.config)
     elif os.path.exists(DEFAULT_CONFIG):
         load_config(DEFAULT_CONFIG)
+
+    wireshark_checks(args)
+    load_crypto_keys(args)
 
     if args.fileb:
         curses.wrapper(diff_view_main, args)
