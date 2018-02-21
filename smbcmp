@@ -45,10 +45,11 @@ def load_config(fn):
     k('bwin_prev', 'n')
     k('vsplit_up', 'KEY_PPAGE')
     k('vsplit_down', 'KEY_NPAGE')
+    set_filter_flag()
 
 def set_filter_flag():
     global TSHARK_FILTER_FLAG
-    out = subprocess.check_output(['tshark', '-h']).decode('utf-8')
+    out = subprocess.check_output(tshark('-h')).decode('utf-8')
     if '-Y' in out:
         TSHARK_FILTER_FLAG = '-Y'
     else:
@@ -83,11 +84,14 @@ def single_split(w, h, vratio):
     bh = h-1-th
     return th, bh
 
+def tshark(*args):
+    binpath = CONF['global'].get('tshark_path', 'tshark')
+    return [binpath] + list(args)
+
 @functools.lru_cache(maxsize=128)
 def smb_summaries(pcap):
-    out = subprocess.check_output(['tshark', '-r', pcap,
-                                   TSHARK_FILTER_FLAG,
-                                   '!browser && (smb||smb2)']).decode('utf-8')
+    cmd = tshark('-r', pcap, TSHARK_FILTER_FLAG, '!browser && (smb||smb2)')
+    out = subprocess.check_output(cmd).decode('utf-8')
     pkts = {}
     for line in out.split('\n'):
         m = re.match(r'''\s*(\d+).+?SMB2?\s*\d+\s*(.+)''', line)
@@ -97,9 +101,8 @@ def smb_summaries(pcap):
 
 @functools.lru_cache(maxsize=128)
 def smb_packet(pcap, no):
-    out = subprocess.check_output(['tshark', '-r', pcap,
-                                   TSHARK_FILTER_FLAG,
-                                   'frame.number == %d'%no, '-V']).decode('utf-8')
+    cmd = tshark('-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V')
+    out = subprocess.check_output(cmd).decode('utf-8')
     out = re.sub(r'^[\s\S]+\nSMB', 'SMB', out, re.S)
     return out
 
@@ -351,7 +354,6 @@ if __name__ == '__main__':
     ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO',
                     help='second file/packet number (diff mode)')
     args = ap.parse_args()
-    set_filter_flag()
 
     if args.config:
         load_config(args.config)
