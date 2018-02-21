@@ -24,8 +24,27 @@ import curses
 import os
 import functools
 import difflib
+import configparser
 
 TSHARK_FILTER_FLAG = None
+DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
+KEY = {}
+CONF = configparser.ConfigParser()
+
+def load_config(fn):
+    CONF.read(fn)
+    def k(name, default):
+        KEY[name] = CONF['global'].get('key_'+name, default)
+    k('lwin_next', 'd')
+    k('lwin_prev', 'f')
+    k('rwin_next', 'j')
+    k('rwin_prev', 'k')
+    k('top_next', 'KEY_DOWN')
+    k('top_prev', 'KEY_UP')
+    k('bwin_next', 'b')
+    k('bwin_prev', 'n')
+    k('vsplit_up', 'KEY_PPAGE')
+    k('vsplit_down', 'KEY_NPAGE')
 
 def set_filter_flag():
     global TSHARK_FILTER_FLAG
@@ -50,6 +69,19 @@ def split_packet_arg(arg):
         return (fn, no)
     except Exception:
         raise Exception("invalid packet:no specified")
+
+
+def diff_split(w, h, vratio):
+    lw = (w-1)//2
+    rw = w-1-lw
+    th = int((h-1)*vratio)
+    bh = h-1-th
+    return lw, rw, th, bh
+
+def single_split(w, h, vratio):
+    th = int((h-1)*vratio)
+    bh = h-1-th
+    return th, bh
 
 @functools.lru_cache(maxsize=128)
 def smb_summaries(pcap):
@@ -169,9 +201,8 @@ def single_view_main(stdscr, args):
 
     H = curses.LINES
     W = curses.COLS
-    th_ratio = .5
-    th = int((H-1)*th_ratio)
-    bh = H-1-th
+    th_ratio = CONF['global'].getfloat('vsplit_ratio', .5)
+    th, bh = single_split(W, H, th_ratio)
 
     twin = curses.newwin(th, W, 0, 0)
     tbuf = TraceViewer(twin, strip_packet_no(args.filea))
@@ -195,40 +226,29 @@ def single_view_main(stdscr, args):
         if k == 'q':
             return
 
-        elif k == 'j':
+        elif k in (KEY['lwin_next'], KEY['rwin_next'], KEY['top_next']):
             tbuf.move(+1)
-        elif k == 'k':
+        elif k in (KEY['lwin_prev'], KEY['rwin_prev'], KEY['top_prev']):
             tbuf.move(-1)
 
-        elif k == 'd':
-            tbuf.move(+1)
-        elif k == 'f':
-            tbuf.move(-1)
-
-        elif k == 'v':
+        elif k == KEY['bwin_next']:
             bbuf.move(+1)
-        elif k == 'b':
+        elif k == KEY['bwin_prev']:
             bbuf.move(-1)
 
-        elif k == 'KEY_PPAGE':
+        elif k == KEY['vsplit_up']:
             th_ratio += -.1
             resize = True
-        elif k == 'KEY_NPAGE':
+        elif k == KEY['vsplit_down']:
             th_ratio += +.1
             resize = True
-
-        elif k == 'KEY_DOWN':
-            tbuf.move(+1)
-        elif k == 'KEY_UP':
-            tbuf.move(-1)
 
         elif k == 'KEY_RESIZE':
             resize = True
 
         if resize:
             H, W = stdscr.getmaxyx()
-            th = int((H-1)*th_ratio)
-            bh = H-1-th
+            th, bh = single_split(W, H, th_ratio)
             twin.resize(th, W)
             bwin.resize(bh, W)
             bwin.mvwin(th+1, 0)
@@ -245,11 +265,8 @@ def diff_view_main(stdscr, args):
 
     H = curses.LINES
     W = curses.COLS
-    th_ratio = .5
-    lw = (W-1)//2
-    rw = W-1-lw
-    th = int((H-1)*th_ratio)
-    bh = H-1-th
+    th_ratio = CONF['global'].getfloat('vsplit_ratio', .5)
+    lw, rw, th, bh = diff_split(W, H, th_ratio)
 
     # h, w, y, x
     lwin = curses.newwin(th, lw, 0, 0)
@@ -279,32 +296,32 @@ def diff_view_main(stdscr, args):
         if k == 'q':
             return
 
-        elif k == 'j':
+        elif k == KEY['rwin_next']:
             rbuf.move(+1)
-        elif k == 'k':
+        elif k == KEY['rwin_prev']:
             rbuf.move(-1)
 
-        elif k == 'd':
+        elif k == KEY['lwin_next']:
             lbuf.move(+1)
-        elif k == 'f':
+        elif k == KEY['lwin_prev']:
             lbuf.move(-1)
 
-        elif k == 'v':
+        elif k == KEY['bwin_next']:
             bbuf.move(+1)
-        elif k == 'b':
+        elif k == KEY['bwin_prev']:
             bbuf.move(-1)
 
-        elif k == 'KEY_PPAGE':
+        elif k == KEY['vsplit_up']:
             th_ratio += -.1
             resize = True
-        elif k == 'KEY_NPAGE':
+        elif k == KEY['vsplit_down']:
             th_ratio += +.1
             resize = True
 
-        elif k == 'KEY_DOWN':
+        elif k == KEY['top_next']:
             lbuf.move(+1)
             rbuf.move(+1)
-        elif k == 'KEY_UP':
+        elif k == KEY['top_prev']:
             lbuf.move(-1)
             rbuf.move(-1)
 
@@ -314,10 +331,7 @@ def diff_view_main(stdscr, args):
 
         if resize:
             H, W = stdscr.getmaxyx()
-            lw = (W-1)//2
-            rw = W-1-lw
-            th = int((H-1)*th_ratio)
-            bh = H-1-th
+            lw, rw, th, bh = diff_split(W, H, th_ratio)
             lwin.resize(th, lw)
             rwin.resize(th, rw)
             rwin.mvwin(0, lw+1)
@@ -331,10 +345,19 @@ def diff_view_main(stdscr, args):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='compare smb packets')
+    ap.add_argument('--config', '-c',
+                    help='read alternative config file')
     ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
-    ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO', help='second file/packet number')
+    ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO',
+                    help='second file/packet number (diff mode)')
     args = ap.parse_args()
     set_filter_flag()
+
+    if args.config:
+        load_config(args.config)
+    elif os.path.exists(DEFAULT_CONFIG):
+        load_config(DEFAULT_CONFIG)
+
     if args.fileb:
         curses.wrapper(diff_view_main, args)
     else:
