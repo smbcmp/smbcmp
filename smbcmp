@@ -114,7 +114,7 @@ def smb_diff(a, b):
     return "\n".join(lines)
 
 class BufferViewer(object):
-    def __init__(self, win, data, hl=True, diff=False):
+    def __init__(self, win, data, hl=True, diff=False, rxhl=None):
         self.win = win
         self.data = data
         self.lines = self.data.split("\n")
@@ -122,6 +122,9 @@ class BufferViewer(object):
         self.cursor = 0
         self.hl = hl
         self.diff = diff
+        self.rxhl = None
+        if rxhl:
+            self.set_rxhl(rxhl)
 
     def set_data(self, data):
         self.data = data
@@ -129,6 +132,9 @@ class BufferViewer(object):
         h = len(self.lines)-1
         self.top = max(0, min(h, self.top))
         self.cursor = max(0, max(self.top, min(h, self.cursor)))
+
+    def set_rxhl(self, rxhl):
+        self.rxhl = [(re.compile(rx), col) for rx,col in rxhl]
 
     def height(self):
         return self.win.getmaxyx()[0]
@@ -158,8 +164,12 @@ class BufferViewer(object):
             line = line.replace('\t', '    ')
             line = line[:self.width()-1]
             line = line.ljust(self.width()-1)
-
             attr = curses.A_NORMAL
+
+            def write(s, a, x=0):
+                if self.hl and self.cursor - self.top == nr:
+                    a = a|curses.A_REVERSE
+                self.win.addstr(nr, x, s, a)
 
             if self.diff:
                 if line[0] == '-':
@@ -167,10 +177,12 @@ class BufferViewer(object):
                 elif line[0] == '+':
                     attr = attr|curses.color_pair(2)
 
-            if self.hl and self.cursor - self.top == nr:
-                attr = attr|curses.A_REVERSE
+            write(line, attr)
 
-            self.win.addstr(nr, 0, line, attr)
+            if not self.diff and self.rxhl:
+                for rx,col in self.rxhl:
+                    for m in rx.finditer(line):
+                        write(m.group(1), col, x=m.start(1))
 
         self.win.refresh()
 
@@ -178,6 +190,9 @@ class BufferViewer(object):
 class TraceViewer(object):
     def __init__(self, win, cap):
         self.buf = BufferViewer(win, '')
+        self.buf.set_rxhl([
+            (r'''(Error)''', curses.color_pair(1)|curses.A_BOLD),
+        ])
         self.set_cap(cap)
 
     def set_cap(self, cap):
@@ -198,9 +213,14 @@ class TraceViewer(object):
     def refresh(self):
         self.buf.refresh()
 
-def single_view_main(stdscr, args):
+def curses_init():
     curses.curs_set(0)
     curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_RED, -1)
+    curses.init_pair(2, curses.COLOR_GREEN, -1)
+
+def single_view_main(stdscr, args):
+    curses_init()
 
     H = curses.LINES
     W = curses.COLS
@@ -261,10 +281,7 @@ def single_view_main(stdscr, args):
             bbuf.set_data(smb_packet(*tbuf.get_packet()))
 
 def diff_view_main(stdscr, args):
-    curses.curs_set(0)
-    curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_RED, -1)
-    curses.init_pair(2, curses.COLOR_GREEN, -1)
+    curses_init()
 
     H = curses.LINES
     W = curses.COLS
