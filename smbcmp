@@ -182,8 +182,6 @@ def smb_diff(a, b):
 class BufferViewer(object):
     def __init__(self, win, data, hl=True, diff=False, rxhl=None):
         self.win = win
-        self.data = data
-        self.lines = self.data.split("\n")
         self.top = 0
         self.cursor = 0
         self.hl = hl
@@ -191,6 +189,7 @@ class BufferViewer(object):
         self.rxhl = None
         if rxhl:
             self.set_rxhl(rxhl)
+        self.set_data(data)
 
     def set_data(self, data):
         self.data = data
@@ -198,6 +197,7 @@ class BufferViewer(object):
         h = len(self.lines)-1
         self.top = max(0, min(h, self.top))
         self.cursor = max(0, max(self.top, min(h, self.cursor)))
+        self.refresh()
 
     def set_rxhl(self, rxhl):
         self.rxhl = [(re.compile(rx), col) for rx,col in rxhl]
@@ -225,7 +225,7 @@ class BufferViewer(object):
             self.cursor -= 1
 
     def refresh(self):
-        self.win.clear()
+        self.win.erase()
         for nr, line in enumerate(self.lines[self.top:self.top+self.height()]):
             line = line.replace('\t', '    ')
             line = line[:self.width()-1]
@@ -250,7 +250,7 @@ class BufferViewer(object):
                     for m in rx.finditer(line):
                         write(m.group(1), col, x=m.start(1))
 
-        self.win.refresh()
+        self.win.noutrefresh()
 
 
 class TraceViewer(object):
