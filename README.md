@@ -4,7 +4,7 @@ smbcmp
 Small curses utility to diff, compare and debug SMB network traces.
 
 
-[![demo (asciinema)](https://asciinema.org/a/D0lsu2dppEYUp936Dr1NL2Kjs.png)](https://asciinema.org/a/D0lsu2dppEYUp936Dr1NL2Kjs)
+[![demo](https://asciinema.org/a/235634.svg)](https://asciinema.org/a/235634)
 
 
 Install
