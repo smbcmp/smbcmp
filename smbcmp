@@ -280,6 +280,7 @@ class TraceViewer(object):
         self.buf.refresh()
 
 def curses_init():
+    curses.initscr()
     curses.curs_set(0)
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
