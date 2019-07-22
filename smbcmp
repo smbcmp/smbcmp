@@ -91,16 +91,23 @@ def split_packet_arg(arg):
 
 def extract_kernel_keys(log):
     r = {}
-    last_id = None
-    last_key = None
-    rx = re.compile(r'''(?:Session Id\s+((?: [a-f0-9]{2})+))|(?:Session Key\s+((?: [a-f0-9]{2})+))''')
-    for m in rx.finditer(log):
-        if m.group(1):
-            last_id = hex_to_bytes(m.group(1))
-        elif m.group(2):
-            last_key = hex_to_bytes(m.group(2))
-            r[last_id] = last_key
-            last_key = last_id = None
+
+    byte = r'(?: [A-Fa-f0-9]{2})'
+    kernel_rx = re.compile(r'(?:Session Id\s+(' +byte+ r'+))|(?:Session Key\s+(' +byte+ r'+))')
+    samba_rx = re.compile(r'(?:Session Id\s+\[0000\]('+byte+r'{8}))'
+                          +'|(?:Session Key\s+\[0000\]('+byte+r'{8}  '+byte+r'{8}))')
+
+    for rx in (kernel_rx, samba_rx):
+        last_id = None
+        last_key = None
+
+        for m in rx.finditer(log):
+            if m.group(1):
+                last_id = hex_to_bytes(m.group(1))
+            elif m.group(2):
+                last_key = hex_to_bytes(m.group(2))
+                r[last_id] = last_key
+                last_key = last_id = None
     return r
 
 def load_crypto_keys(args):
@@ -436,9 +443,12 @@ if __name__ == '__main__':
                     help='read alternative config file (default %s)'%DEFAULT_CONFIG)
     ap.add_argument('-k', '--key', metavar='KEYPAIR',
                     default=[], action='append',
-                    help='either a path to a kernel log file to extract keys from ('+
-                    'needs CONFIG_CIFS_DEBUG_KEYS enabled) or literal session '+
-                    'id & key pair given in hex (as SESSID,KEY)')
+                    help='''KEYPAIR can be either a path to a log file containing the keys (for
+                    the kernel client, enable CONFIG_CIFS_DEBUG_KEYS,
+                    for samba --option=debugencryption=yes) or literal
+                    session id & key pair given in hex (as
+                    SESSID,KEY). This option can be used multiple
+                    times to pass multiple keys.''')
     ap.add_argument('filea', metavar='CAPFILE1:NO', help='first file/packet number')
     ap.add_argument('fileb', nargs='?', metavar='CAPFILE2:NO',
                     help='second file/packet number (diff mode)')
