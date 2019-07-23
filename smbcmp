@@ -17,15 +17,19 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import argparse
+import binascii
+import configparser
 import subprocess
 import re
-import tempfile
-import curses
-import os
-import functools
-import difflib
-import configparser
 import binascii
+import curses
+import functools
+import os
+import configparser
+from subprocess import SubprocessError
+import difflib
+import xml.etree.ElementTree as ET
+from itertools import zip_longest
 
 TSHARK_FILTER_FLAG = None
 DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
@@ -33,8 +37,30 @@ KEY = {}
 CONF = configparser.ConfigParser()
 CRYPTO_KEY = {}
 
+# output types
+OUT_SAME = 0  # normal node
+OUT_ADD = 1  # added node
+OUT_REM = 2  # removed node
+OUT_MOD = 3  # node modified
+
+# equality types
+SAME = 0  # node are identical
+MOD = 1  # nodes are same type but value differs
+DIFF = 2  # nodes are completely different
+
+# prefix and colors
+STYLE = {
+    OUT_SAME: (' ', '',        ''),
+    OUT_ADD: ('+', '\x1b[32m', '\x1b[0m'),  # green
+    OUT_REM: ('-', '\x1b[31m', '\x1b[0m'),  # red
+}
+COL_END = "\x1b[0m"  # reset
+COL_IGNORED = "\x1b[30;1m"  # bold
+
+
 def load_config(fn):
     CONF.read(fn)
+
     def k(name, default):
         KEY[name] = CONF['global'].get('key_'+name, default)
     k('lwin_next', 'd')
@@ -48,10 +74,11 @@ def load_config(fn):
     k('vsplit_up', 'KEY_PPAGE')
     k('vsplit_down', 'KEY_NPAGE')
 
+
 def wireshark_checks(args):
     try:
         out = subprocess.check_output(tshark('-h')).decode('utf-8')
-    except:
+    except SubprocessError:
         print("Can't run tshark, check if installed properly")
         raise
 
@@ -66,12 +93,14 @@ def wireshark_checks(args):
 
     if args.key:
         try:
-            out = subprocess.check_output(tshark('-ouat:smb2_seskey_list:ffffffffffffffff'+
-                                                 ',ffffffffffffffffffffffffffffffff',
-                                                 '-v')).decode('utf-8')
-        except:
+            out = subprocess.check_output(tshark(
+                '-ouat:smb2_seskey_list:ffffffffffffffff' +
+                ',ffffffffffffffffffffffffffffffff',
+                '-v')).decode('utf-8')
+        except SubprocessError:
             print("your version of tshark doesn't support decryption")
             raise
+
 
 def strip_packet_no(arg):
     try:
@@ -79,6 +108,7 @@ def strip_packet_no(arg):
         return arg[:i]
     except Exception:
         return arg
+
 
 def split_packet_arg(arg):
     try:
@@ -89,9 +119,9 @@ def split_packet_arg(arg):
     except Exception:
         raise Exception("invalid packet:no specified")
 
+
 def extract_kernel_keys(log):
     r = {}
-
     byte = r'(?: [A-Fa-f0-9]{2})'
     kernel_rx = re.compile(r'(?:Session Id\s+(' +byte+ r'+))|(?:Session Key\s+(' +byte+ r'+))')
     samba_rx = re.compile(r'(?:Session Id\s+\[0000\]('+byte+r'{8}))'
@@ -110,12 +140,13 @@ def extract_kernel_keys(log):
                 last_key = last_id = None
     return r
 
+
 def load_crypto_keys(args):
     # try dmesg
     try:
         dmesg = subprocess.check_output(["dmesg"]).decode("utf-8")
         CRYPTO_KEY.update(extract_kernel_keys(dmesg))
-    except Exception as e:
+    except SubprocessError:
         pass
 
     for kp in args.key:
@@ -127,7 +158,10 @@ def load_crypto_keys(args):
         elif os.path.exists(kp):
             CRYPTO_KEY.update(extract_kernel_keys(open(kp).read()))
         else:
-            raise Exception("<%s> is neither a file nor a hex SID,KEY string"%kp)
+            raise Exception("<%s> is neither a file nor a hex SID,KEY string"
+                            % kp)
+
+
 
 def diff_split(w, h, vratio):
     lw = (w-1)//2
@@ -136,27 +170,64 @@ def diff_split(w, h, vratio):
     bh = h-1-th
     return lw, rw, th, bh
 
+
 def single_split(w, h, vratio):
     th = int((h-1)*vratio)
     bh = h-1-th
     return th, bh
 
+
 def tshark(*args):
     binpath = CONF['global'].get('tshark_path', 'tshark')
     return [binpath] + list(args)
 
+
 def bytes_to_hex(b):
     return binascii.hexlify(b).decode('ascii')
+
 
 def hex_to_bytes(h):
     return binascii.unhexlify(h.replace(' ', ''))
 
+
 def tshark_keys_opts():
     r = []
     for (sid, skey) in CRYPTO_KEY.items():
-        opt = "-ouat:smb2_seskey_list:%s,%s"%(bytes_to_hex(sid), bytes_to_hex(skey))
+        opt = "-ouat:smb2_seskey_list:%s,%s" % (bytes_to_hex(sid),
+                                                bytes_to_hex(skey))
         r.append(opt)
     return r
+
+
+def wrap(prefix, s):
+    """Prefix every line in s with prefix"""
+    return ''.join([prefix+x+"\n" for x in s.splitlines()])
+
+
+def is_multiline(s):
+    return s.count('\n') > 0
+
+
+def multiline_mod(a, b, ignored=False):
+    """Helper to generate a colorized diff of multi-line values"""
+    out = []
+    max_len = max([len(x) for x in a.splitlines()])
+
+    # pick colors
+    add = STYLE[OUT_ADD][1]
+    rem = STYLE[OUT_REM][1]
+    if ignored:
+        add = rem = COL_IGNORED
+
+    i = 0
+    for aa, bb in zip_longest(a.splitlines(), b.splitlines(), fillvalue=''):
+        aa = aa.ljust(max_len + 2)
+        mid = "   "
+        if i == 0:
+            mid = " → "
+        out.append(rem+aa+COL_END+mid+add+bb+COL_END+"\n")
+        i += 1
+    return ''.join(out)
 
 
 @functools.lru_cache(maxsize=128)
@@ -171,20 +242,28 @@ def smb_summaries(pcap):
             pkts[int(m.group(1))] = m.group(2)
     return pkts
 
-@functools.lru_cache(maxsize=128)
-def smb_packet(pcap, no):
-    cmd = tshark(*tshark_keys_opts())
-    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V']
-    out = subprocess.check_output(cmd).decode('utf-8')
-    out = re.sub(r'^[\s\S]+?\nSMB', 'SMB', out, re.S)
-    return out
 
 @functools.lru_cache(maxsize=128)
-def smb_diff(a, b):
-    lines = difflib.unified_diff(smb_packet(a[0], a[1]).split("\n"),
-                                 smb_packet(b[0], b[1]).split("\n"),
-                                 a[0], b[0], lineterm="")
-    return "\n".join(lines)
+def smb_packet(pcap, no, pdml=False):
+    """ Show the content of a packet
+
+    Keyword arguments
+
+    pcap -- name of the capture file
+
+    no -- number of the packet
+
+    """
+    cmd = tshark(*tshark_keys_opts())
+    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d' % no, '-V']
+    if pdml:
+        cmd += ['-Tpdml']
+        return subprocess.check_output(cmd).decode('utf-8')
+    else:
+        out = subprocess.check_output(cmd).decode('utf-8')
+        out = re.sub(r'^[\s\S]+?\nSMB', 'SMB', out, re.S)
+        return out
+
 
 class BufferViewer(object):
     def __init__(self, win, data, hl=True, diff=False, rxhl=None):
@@ -207,7 +286,7 @@ class BufferViewer(object):
         self.refresh()
 
     def set_rxhl(self, rxhl):
-        self.rxhl = [(re.compile(rx), col) for rx,col in rxhl]
+        self.rxhl = [(re.compile(rx), col) for rx, col in rxhl]
 
     def height(self):
         return self.win.getmaxyx()[0]
@@ -246,25 +325,98 @@ class BufferViewer(object):
 
             if self.diff:
                 if line[0] == '-':
-                    attr = attr|curses.color_pair(1)
+                    attr = attr | curses.color_pair(1)
                 elif line[0] == '+':
-                    attr = attr|curses.color_pair(2)
+                    attr = attr | curses.color_pair(2)
 
             write(line, attr)
 
             if not self.diff and self.rxhl:
-                for rx,col in self.rxhl:
+                for rx, col in self.rxhl:
                     for m in rx.finditer(line):
                         write(m.group(1), col, x=m.start(1))
 
         self.win.noutrefresh()
 
 
+class BufferViewerCSIColors(BufferViewer):
+    def getselected(self):
+        return self.selected
+
+    def refresh(self):
+        self.win.erase()
+        lines = []
+        for line in self.lines[self.top:self.top+self.height()]:
+            line = line.replace('\t', '    ')
+            line = line.ljust(self.width()-1)
+            lines.append(line)
+        text = '\n'.join(lines)
+
+        t_newline = 1
+        t_text = 2
+        t_esc = 3
+        rx = r'(\n)|([^\x1b\n]+)|(\x1b\[.+?m)'
+
+        y = 0
+        x = 0
+        attr = curses.A_NORMAL
+
+        def write(s, a):
+            if self.hl and self.cursor - self.top == y:
+                a = a | curses.A_REVERSE
+                self.selected = s.split(":")[0].strip()
+            if x + len(s) >= self.width():
+                s = s[:self.width()-x-1]
+            self.win.addstr(y, x, s, a)
+
+        for tok in re.finditer(rx, text):
+            typ = tok.lastindex
+            val = tok.group()
+            if typ == t_text:
+                write(val, attr)
+                x += len(val)
+            elif typ == t_newline:
+                y += 1
+                x = 0
+            elif typ == t_esc:
+                assert(val[-1] == 'm')
+                for num in val[2:-1].split(';'):
+                    num = int(num)
+                    if num == 0:
+                        attr = curses.A_NORMAL
+                    elif num == 31:
+                        attr |= curses.color_pair(1)
+                    elif num == 32:
+                        attr |= curses.color_pair(2)
+                    elif num == 1:
+                        attr |= curses.A_BOLD
+                    else:
+                        raise Exception("unsupported CSI color")
+            else:
+                raise Exception("invalid token %d" % typ)
+        self.win.noutrefresh()
+
+
 class TraceViewer(object):
+    """ Browse packet names of a capture file with a cursor
+
+    Keyword arguments:
+
+    win -- the windows object representing the part of the screen occupied
+
+    cap -- name of the capture file
+
+    buf -- content of the window
+
+    nos -- ordered list of packets numbers
+
+    pkts -- set of numbered packets
+
+    """
     def __init__(self, win, cap):
         self.buf = BufferViewer(win, '')
         self.buf.set_rxhl([
-            (r'''(Error)''', curses.color_pair(1)|curses.A_BOLD),
+            (r'''(Error)''', curses.color_pair(1) | curses.A_BOLD),
         ])
         self.set_cap(cap)
 
@@ -286,12 +438,380 @@ class TraceViewer(object):
     def refresh(self):
         self.buf.refresh()
 
+
+class Node:
+    def __init__(self, name, val, *children):
+        self.name = name
+        self.val = val
+        self.children = children
+        self._cached_hash = None
+
+    def display_name_val(self):
+        """Return a tuple (name, val) used for showing humans"""
+        if '....' in self.val:
+            # bitfields are left alone
+            return ('', self.val)
+        if ':' in self.val:
+            return self.val.split(":", 1)
+
+        return ('', self.val)
+
+    def __str__(self):
+        return "<%s: %s ...>" % (self.name, self.val)
+
+    def __repr__(self):
+        return "<%s: %s ...>" % (self.name, self.val)
+
+    def __hash__(self):
+        if not self._cached_hash:
+            if self.children:
+                ch = tuple(x.__hash__() for x in self.children)
+            else:
+                ch = hash(None)
+            # don't hash the value, check for val mods in 'equal'
+            self._cached_hash = hash((self.name, ch))
+        return self._cached_hash
+
+    def __eq__(self, o):
+        if self.name != o.name or self.val != o.val:
+            return False
+        if not self.children and not o.children:
+            return True
+        if self.children and o.children:
+            if len(self.children) != len(o.children):
+                return False
+            for a, b in zip_longest(self.children, o.children):
+                if not a.__eq__(b):
+                    return False
+            return True
+        return False
+
+
+class Output:
+    def __init__(self):
+        self.buf = ''
+
+    def dump(self, mode, node, ignored=False, indent=0):
+        """Recursively dump a node.
+        mode must be one of the OUT_??? type."""
+        if not node.children:
+            self.print_field(mode, node, ignored, indent)
+        else:
+            self.print_field(mode, node, ignored, indent)
+            for child in node.children:
+                self.dump(mode, child, ignored, indent+1)
+
+    def print_mod_field(self, a, b, ignored=False, indent=0):
+        """Print a diff of 2 same-type nodes"""
+
+        # pick colors
+        add = STYLE[OUT_ADD][1]
+        rem = STYLE[OUT_REM][1]
+        if ignored:
+            add = rem = COL_IGNORED
+
+        a_name, a_val = a.display_name_val()
+        b_name, b_val = b.display_name_val()
+
+        if is_multiline(a_val) or is_multiline(b_val):
+            diff = wrap(' '*(len(a_name)+2), multiline_mod(a_val, b_val,
+                                                           ignored))
+            text = '{name}:\n{diff}\n'.format(name=a_name, diff=diff)
+        else:
+            fmt = '{name}: {rem}{a}{end} → {add}{b}{end}\n'
+            text = fmt.format(name=a_name, a=a_val, b=b_val,
+                              rem=rem,
+                              add=add,
+                              end=COL_END)
+        self.buf += wrap(' '*(4*indent+1), text)
+
+    def print_field(self, mode, node, ignored=False, indent=0):
+        """Print a node"""
+
+        name, val = node.display_name_val()
+
+        # wrap and indent multiline values
+        if is_multiline(val):
+            val_indent = ' '*(len(name)+4)
+            text = '%s:\n%s\n' % (name, wrap(val_indent, val))
+        else:
+            text = '%s: %s\n' % (name, val)
+
+        # pick colors
+        prefix, beg, end = STYLE[mode]
+        if ignored:
+            beg = COL_IGNORED
+
+        prefix = ('    '*indent)+prefix
+        text = wrap(prefix, text)
+
+        self.buf += (beg + text + end)
+
+
+class PDMLDiff:
+    """ compute diffs between two PDML with smb* trees extracted
+
+    Class variable:
+
+    diffs -- dictionnary containing diffs
+    ignored_fields -- set of ignored fields while diffing
+    ignorable_fields -- set of ignorable fields populated while parsing trees
+    """
+
+    ignorable_fields = set()
+
+    ignored_fields = set()
+
+    def __init__(self):
+        pass
+
+    def getignored_fields(self):
+        return self.ignored_fields
+
+    def setignored_fields(self, field):
+        if field in self.ignored_fields:
+            self.ignored_fields.remove(field)
+        else:
+            self.ignored_fields.add(field)
+
+    def getignorable_fields(self):
+        return self.ignorable_fields
+
+    def pdml_to_node(self, xml):
+
+        def _pdml_to_node(field):
+            children = list(field)
+
+            name = field.get('name')
+            show = field.get('show')
+            showname = field.get('showname')
+            if showname:
+                tag_filter = showname.split(":")[0]
+                self.ignorable_fields.add(tag_filter)
+
+            if not showname and show:
+                showname = show
+
+            if not children:
+                return Node(name, showname)
+            else:
+                return Node(name, showname,
+                            *tuple(_pdml_to_node(c) for c in children))
+
+        xml = ET.fromstring(xml)
+        smb2 = xml.findall("./packet/proto[@name='smb2']")
+        return Node('Root', 'Root',
+                    *tuple(_pdml_to_node(x) for x in smb2))
+
+    def smb_diff(self, a, b, pdml=False):
+        """ Show the diff between two packets
+
+        Keyword arguments:
+
+        a -- tuple containing the name of the first packet file and the number
+        of the packet
+
+        b -- tuple containing the name of the second packet file and the
+        number of the packet
+
+        """
+
+        node_a = self.pdml_to_node(smb_packet(a[0], a[1], pdml=True))
+        node_b = self.pdml_to_node(smb_packet(b[0], b[1], pdml=True))
+        return self.trace_diff(node_a, node_b).buf
+
+    def ignored_with_rules(self, node):
+        """Return True if the presence/absence of node can be ignored"""
+        # use node name and content to decide whether it should be
+        # considered different if completely added or removed
+        # note that node can be flat or tree
+        if node.name in self.ignored_fields:
+            return True
+        return False
+
+    def diff_field_with_rules(self, a, b):
+        """Return a tuple (eq_type, ignored) between 2 leaf nodes"""
+        # use field names and values to decide equality type
+        # a and b are always flat
+        if a.name == b.name:
+            if a.val == b.val:
+                eq = SAME
+            else:
+                eq = MOD
+        else:
+            eq = DIFF
+        ign = False
+        if eq == MOD and a.name in self.ignored_fields:
+            ign = True
+        return (eq, ign)
+
+    def diff_attr_with_rules(self, a, b):
+        """Return a tuple (eq_type, ignored) between 2 folder nodes"""
+        # use field names and values to decide equality type
+        if a.name == b.name:
+            if a.val == b.val:
+                eq = SAME
+            else:
+                eq = MOD
+        else:
+            eq = DIFF
+        ign = False
+        if eq == MOD and a.name in self.ignored_fields:
+            ign = True
+        return (eq, ign)
+
+    def trace_diff(self, trace_a, trace_b):
+        root_a = trace_a
+        root_b = trace_b
+        output = Output()
+
+        def rec_diff(a, b, n=0):
+            final_eq = SAME
+
+            #
+            # Diff a folder attributes
+            #
+
+            eq, ign = self.diff_attr_with_rules(a, b)
+            if eq == SAME:
+                # doesnt matter which
+                output.print_field(OUT_SAME, a, indent=n)
+            elif eq == MOD:
+                output.print_mod_field(a, b, indent=n)
+                if not ign:
+                    final_eq = max(final_eq, eq)
+            elif eq == DIFF:
+                output.dump(OUT_REM, a, ignored=ign, indent=n)
+                output.dump(OUT_ADD, b, ignored=ign, indent=n)
+                if not ign:
+                    final_eq = max(final_eq, eq)
+                return final_eq
+
+            #
+            # Diff the children of the folder
+            #
+
+            sm = difflib.SequenceMatcher(None, a.children, b.children)
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag == 'delete':
+                    for child_a in a.children[i1:i2]:
+                        ign = self.ignored_with_rules(child_a)
+                        output.dump(OUT_REM, child_a, ignored=ign, indent=n+1)
+                        if not ign:
+                            final_eq = max(final_eq, eq)
+                    continue
+                elif tag == 'insert':
+                    for child_b in b.children[j1:j2]:
+                        ign = self.ignored_with_rules(child_b)
+                        output.dump(OUT_ADD, child_b, ignored=ign, indent=n+1)
+                        if not ign:
+                            final_eq = max(final_eq, eq)
+                    continue
+                elif tag == 'equal':
+                    for child_a, child_b in zip_longest(a.children[i1:i2],
+                                                        b.children[j1:j2]):
+                        eq, ign = self.diff_field_with_rules(child_a, child_b)
+                        if eq == SAME:
+                            # doesnt matter which
+                            output.dump(OUT_SAME, child_a, indent=n+1)
+                        elif eq == MOD:
+                            output.print_mod_field(child_a, child_b,
+                                                   ignored=ign, indent=n+1)
+                            if not ign:
+                                final_eq = max(final_eq, eq)
+                        else:
+                            raise Exception("nodes should not be diff here")
+                    continue
+                elif tag == 'replace':
+                    for child_a, child_b in zip_longest(a.children[i1:i2],
+                                                        b.children[j1:j2]):
+
+                        #
+                        # Cases where A and B have different numbers
+                        # of children
+
+                        if child_a is None:
+                            # B has more children
+                            ign = self.ignored_with_rules(child_b)
+                            output.dump(OUT_ADD, child_b, ignored=ign, indent=n+1)
+                            if not ign:
+                                final_eq = max(final_eq, eq)
+                            continue
+
+                        if child_b is None:
+                            # A has more children
+                            ign = self.ignored_with_rules(child_a)
+                            output.dump(OUT_REM, child_a, ignored=ign, indent=n+1)
+                            if not ign:
+                                final_eq = max(final_eq, eq)
+                            continue
+
+                        #
+                        # Terminal cases: 2 leaf nodes
+                        #
+
+                        if not child_a.children and not child_b.children:
+                            eq, ign = self.diff_field_with_rules(child_a,
+                                                                 child_b)
+                            if eq == SAME:
+                                # doesnt matter which
+                                output.dump(OUT_SAME, child_a, indent=n+1)
+                            elif eq == MOD:
+                                output.print_mod_field(child_a, child_b,
+                                                       ignored=ign, indent=n+1)
+                                if not ign:
+                                    final_eq = max(final_eq, eq)
+                            else:
+                                output.dump(OUT_REM, child_a, ignored=ign,
+                                            indent=n+1)
+                                output.dump(OUT_ADD, child_b, ignored=ign,
+                                            indent=n+1)
+                                if not ign:
+                                    final_eq = max(final_eq, eq)
+                            continue
+
+
+                        #
+                        # 1 Leaf node vs 1 Folder node
+                        #
+
+                        if not child_a.children or not child_b.children:
+                            # doesn't make sense to diff deeper,
+                            # consider one has been removed
+                            # and the other added
+
+                            ign = self.ignored_with_rules(child_a) and \
+                                self.ignored_with_rules(child_b)
+                            output.dump(OUT_REM, child_a, ignored=ign,
+                                        indent=n+1)
+                            output.dump(OUT_ADD, child_b, ignored=ign,
+                                        indent=n+1)
+                            if not ign:
+                                final_eq = max(final_eq, DIFF)
+                            continue
+
+                        #
+                        # Recursive case: 2 Tree nodes
+                        #
+
+                        eq = rec_diff(child_a, child_b, n=n+1)
+                        final_eq = max(final_eq, eq)
+
+            return final_eq
+
+        rec_diff(root_a, root_b)
+        return output
+
+
 def curses_init():
     curses.initscr()
     curses.curs_set(0)
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
     curses.init_pair(2, curses.COLOR_GREEN, -1)
+    curses.init_pair(3, curses.COLOR_BLUE, -1)
+    curses.init_pair(4, curses.COLOR_MAGENTA, -1)
+
 
 def single_view_main(stdscr, args):
     curses_init()
@@ -354,9 +874,9 @@ def single_view_main(stdscr, args):
         if tbuf.get_packet()[1] != last_packet:
             bbuf.set_data(smb_packet(*tbuf.get_packet()))
 
+
 def diff_view_main(stdscr, args):
     curses_init()
-
     H = curses.LINES
     W = curses.COLS
     th_ratio = CONF['global'].getfloat('vsplit_ratio', .5)
@@ -369,16 +889,17 @@ def diff_view_main(stdscr, args):
     rwin = curses.newwin(th, rw, 0, lw+1)
     rbuf = TraceViewer(rwin, strip_packet_no(args.fileb))
 
+    pdmldiff = PDMLDiff()
     bwin = curses.newwin(bh, W, th+1, 0)
-    bbuf = BufferViewer(bwin, "", diff=True)
+    bbuf = BufferViewerCSIColors(bwin, "", diff=True)
     resize = False
-    bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
-
+    bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(), rbuf.get_packet(),
+                                    pdml=True))
     while True:
-        stdscr.refresh()
         rbuf.refresh()
         lbuf.refresh()
         bbuf.refresh()
+
         # y, x, ch, length
         stdscr.vline(0, lw, 0, th)
         stdscr.hline(th, 0, 0, W)
@@ -422,6 +943,11 @@ def diff_view_main(stdscr, args):
         elif k == 'KEY_RESIZE':
             resize = True
 
+        elif k == 'a':
+            for element in pdmldiff.getignorable_fields():
+                if element in bbuf.getselected():
+                    pdmldiff.setignored_fields(element)
+            bbuf.refresh()
 
         if resize:
             H, W = stdscr.getmaxyx()
@@ -433,9 +959,24 @@ def diff_view_main(stdscr, args):
             bwin.mvwin(th+1, 0)
             resize = False
 
-
         if lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket:
-            bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
+            bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(),
+                                            rbuf.get_packet(),
+                                            pdml=True))
+
+
+def clear(stdscr):
+    """ Disable curses while debugging
+
+    Keyword arguments:
+
+    stdscr -- the window object representing the entire screen
+    """
+    curses.nocbreak()
+    stdscr.keypad(0)
+    curses.echo()
+    curses.endwin()
+
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='compare smb packets')

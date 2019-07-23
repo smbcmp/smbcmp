@@ -6,9 +6,17 @@ Small curses utility to diff, compare and debug SMB network traces.
 
 [![demo](https://asciinema.org/a/235634.svg)](https://asciinema.org/a/235634)
 
+    
 
 Install
 =======
+
+    git clone https://github.com/aaptel/smbcmp.git
+    cd smbcmp
+    python3 -m venv .
+    source ./bin/activate 
+    pip3 install -r requirements.txt
+    chmod +x smbcmp
 
 Dependencies:
 - python3
