@@ -176,7 +176,7 @@ def smb_packet(pcap, no):
     cmd = tshark(*tshark_keys_opts())
     cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d'%no, '-V']
     out = subprocess.check_output(cmd).decode('utf-8')
-    out = re.sub(r'^[\s\S]+\nSMB', 'SMB', out, re.S)
+    out = re.sub(r'^[\s\S]+?\nSMB', 'SMB', out, re.S)
     return out
 
 @functools.lru_cache(maxsize=128)
