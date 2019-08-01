@@ -21,11 +21,9 @@ import binascii
 import configparser
 import subprocess
 import re
-import binascii
 import curses
 import functools
 import os
-import configparser
 from subprocess import SubprocessError
 import difflib
 try:
