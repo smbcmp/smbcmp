@@ -39,27 +39,6 @@ KEY = {}
 CONF = configparser.ConfigParser()
 CRYPTO_KEY = {}
 
-# output types
-OUT_SAME = 0  # normal node
-OUT_ADD = 1  # added node
-OUT_REM = 2  # removed node
-OUT_MOD = 3  # node modified
-
-# equality types
-SAME = 0  # node are identical
-MOD = 1  # nodes are same type but value differs
-DIFF = 2  # nodes are completely different
-
-# prefix and colors
-STYLE = {
-    OUT_SAME: (' ', '',        ''),
-    OUT_ADD: ('+', '\x1b[32m', '\x1b[0m'),  # green
-    OUT_REM: ('-', '\x1b[31m', '\x1b[0m'),  # red
-}
-COL_END = "\x1b[0m"  # reset
-COL_IGNORED = "\x1b[30;1m"  # bold
-
-
 def load_config(fn):
     CONF.read(fn)
 
@@ -75,6 +54,7 @@ def load_config(fn):
     k('bwin_prev', 'n')
     k('vsplit_up', 'KEY_PPAGE')
     k('vsplit_down', 'KEY_NPAGE')
+    k('toggle_ignore', 'a')
 
 
 def wireshark_checks(args):
@@ -331,9 +311,9 @@ class BufferViewer(object):
 
             if self.diff:
                 if line[0] == '-':
-                    attr = attr | curses.color_pair(1)
+                    attr = attr | curses.color_pair(COL_RED)
                 elif line[0] == '+':
-                    attr = attr | curses.color_pair(2)
+                    attr = attr | curses.color_pair(COL_GREEN)
 
             write(line, attr)
 
@@ -365,12 +345,11 @@ class BufferViewerCSIColors(BufferViewer):
 
         y = 0
         x = 0
-        attr = curses.A_NORMAL
+        attr = curses.color_pair(COL_DEFAULT)
 
         def write(s, a):
-            if self.hl and self.cursor - self.top == y:
+            if self.hl and self.cursor - self.top == y and attr!=curses.color_pair(COL_BLACK)|curses.A_BOLD:
                 a = a | curses.A_REVERSE
-                self.selected = s.split(":")[0].strip()
             if x + len(s) >= self.width():
                 s = s[:self.width()-x-1]
             self.win.addstr(y, x, s, a)
@@ -389,11 +368,13 @@ class BufferViewerCSIColors(BufferViewer):
                 for num in val[2:-1].split(';'):
                     num = int(num)
                     if num == 0:
-                        attr = curses.A_NORMAL
+                        attr = curses.color_pair(COL_DEFAULT)
+                    elif num == 30:
+                        attr = curses.color_pair(COL_BLACK)
                     elif num == 31:
-                        attr |= curses.color_pair(1)
+                        attr = curses.color_pair(COL_RED)
                     elif num == 32:
-                        attr |= curses.color_pair(2)
+                        attr = curses.color_pair(COL_GREEN)
                     elif num == 1:
                         attr |= curses.A_BOLD
                     else:
@@ -402,6 +383,35 @@ class BufferViewerCSIColors(BufferViewer):
                 raise Exception("invalid token %d" % typ)
         self.win.noutrefresh()
 
+class DiffViewer:
+    def __init__(self, win):
+        """Special BufferViewer wrapper for PDML diffs
+
+        Keyword arguments:
+        win -- curses window object to display on
+        """
+        self.buf = BufferViewerCSIColors(win, '')
+        self.diff = None
+
+    def diff_packets(self, pkt_a, pkt_b):
+        ign = None
+        if self.diff:
+            ign = self.diff.ignored_fields
+        self.diff = PDMLDiff(pkt_a, pkt_b, ign)
+        self.out = self.diff.smb_diff()
+        self.buf.set_data(self.out.get_text())
+
+    def toggle_ignore_field(self):
+        field = self.out.get_item_at_line(self.buf.cursor)
+        self.diff.toggle_ignore_field(field.name)
+        self.out = self.diff.smb_diff()
+        self.buf.set_data(self.out.get_text())
+
+    def move(self, direction):
+        self.buf.move(direction)
+
+    def refresh(self):
+        self.buf.refresh()
 
 class TraceViewer(object):
     """Browse packet names of a capture file with a cursor
@@ -484,9 +494,53 @@ class Node:
         return False
 
 
-class Output:
+class DiffOutputItem:
+    def __init__(self, name, text, node_a=None, node_b=None):
+        self.name = name
+        self.text = text
+        self.node_a = node_a
+        self.node_b = node_b
+        self.nb_lines = text.count('\n')
+
+# output types
+OUT_SAME = 0  # normal node
+OUT_ADD = 1  # added node
+OUT_REM = 2  # removed node
+OUT_MOD = 3  # node modified
+
+# equality types
+SAME = 0  # node are identical
+MOD = 1  # nodes are same type but value differs
+DIFF = 2  # nodes are completely different
+
+# prefix and colors
+STYLE = {
+    OUT_SAME: (' ', '',        ''),
+    OUT_ADD: ('+', '\x1b[32m', '\x1b[0m'),  # green
+    OUT_REM: ('-', '\x1b[31m', '\x1b[0m'),  # red
+}
+COL_END = "\x1b[0m"  # reset
+COL_IGNORED = "\x1b[30;1m"  # bold
+
+class DiffOutput:
     def __init__(self):
-        self.buf = ''
+        self.items = []
+
+    def get_item_at_line(self, line):
+        prev = 0
+
+        if len(self.items) == 0:
+            return None
+
+        for it in self.items:
+            if prev <= line < prev + it.nb_lines:
+                return it
+            prev += it.nb_lines
+
+        return self.items[-1]
+
+    def get_text(self):
+        return ''.join([x.text for x in self.items])
 
     def dump(self, mode, node, ignored=False, indent=0):
         """Recursively dump a node.
@@ -520,7 +574,7 @@ class Output:
                               rem=rem,
                               add=add,
                               end=COL_END)
-        self.buf += wrap(' '*(4*indent+1), text)
+        self.items.append(DiffOutputItem(a.name, wrap(' '*(4*indent+1), text), a, b))
 
     def print_field(self, mode, node, ignored=False, indent=0):
         """Print a node"""
@@ -542,29 +596,35 @@ class Output:
         prefix = ('    '*indent)+prefix
         text = wrap(prefix, text)
 
-        self.buf += (beg + text + end)
+        self.items.append(DiffOutputItem(node.name, (beg + text + end), node))
 
 
 class PDMLDiff:
-    """Compute diffs between two captures using PDML output"""
+    """Compute diffs between two captures using PDML output
 
-    ignorable_fields = set()
-    ignored_fields = set()
+    Keyword arguments:
+    pkt_a -- a tuple ('foo_a.cap', frame_nb)
+    pkt_b -- a tuple ('foo_b.cap', frame_nb)
+    ignored_fields -- a set() of wireshark field names (e.g. "smb2.session_id")
+    """
+    def __init__(self, pkt_a, pkt_b, ignored_fields=None):
+        if ignored_fields is None:
+            ignored_fields = set()
+        self.ignored_fields = ignored_fields
+        self.set_packets(pkt_a, pkt_b)
 
-    def __init__(self):
-        pass
+    def set_packets(self, pkt_a, pkt_b):
+        self.pkt_a = self.pdml_to_node(smb_packet(pkt_a[0], pkt_a[1], pdml=True))
+        self.pkt_b = self.pdml_to_node(smb_packet(pkt_b[0], pkt_b[1], pdml=True))
 
-    def getignored_fields(self):
-        return self.ignored_fields
+    def ignore_field(self, field):
+        self.ignored_fields.add(field)
 
-    def setignored_fields(self, field):
+    def toggle_ignore_field(self, field):
         if field in self.ignored_fields:
             self.ignored_fields.remove(field)
         else:
             self.ignored_fields.add(field)
-
-    def getignorable_fields(self):
-        return self.ignorable_fields
 
     def pdml_to_node(self, xml):
 
@@ -574,9 +634,6 @@ class PDMLDiff:
             name = field.get('name')
             show = field.get('show')
             showname = field.get('showname')
-            if showname:
-                tag_filter = showname.split(":")[0]
-                self.ignorable_fields.add(tag_filter)
 
             if not showname and show:
                 showname = show
@@ -591,23 +648,6 @@ class PDMLDiff:
         smb2 = xml.findall("./packet/proto[@name='smb2']")
         return Node('Root', 'Root',
                     *tuple(_pdml_to_node(x) for x in smb2))
-
-    def smb_diff(self, a, b, pdml=False):
-        """Show the diff between two packets
-
-        Keyword arguments:
-
-        a -- tuple containing the name of the first packet file and the number
-        of the packet
-
-        b -- tuple containing the name of the second packet file and the
-        number of the packet
-
-        """
-
-        node_a = self.pdml_to_node(smb_packet(a[0], a[1], pdml=True))
-        node_b = self.pdml_to_node(smb_packet(b[0], b[1], pdml=True))
-        return self.trace_diff(node_a, node_b).buf
 
     def ignored_with_rules(self, node):
         """Return True if the presence/absence of node can be ignored"""
@@ -649,8 +689,9 @@ class PDMLDiff:
             ign = True
         return (eq, ign)
 
-    def trace_diff(self, root_a, root_b):
-        output = Output()
+    def smb_diff(self):
+        """Compute PDML diff and return DiffOutput instance"""
+        output = DiffOutput()
 
         def rec_diff(a, b, n=0):
             final_eq = SAME
@@ -786,19 +827,23 @@ class PDMLDiff:
 
             return final_eq
 
-        rec_diff(root_a, root_b)
+        rec_diff(self.pkt_a, self.pkt_b)
         return output
 
+# curses pair id
+COL_DEFAULT = 0
+COL_RED = 1
+COL_GREEN = 2
+COL_BLACK = 3
 
 def curses_init():
     curses.initscr()
     curses.curs_set(0)
     curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_RED, -1)
-    curses.init_pair(2, curses.COLOR_GREEN, -1)
-    curses.init_pair(3, curses.COLOR_BLUE, -1)
-    curses.init_pair(4, curses.COLOR_MAGENTA, -1)
 
+    curses.init_pair(COL_RED, curses.COLOR_RED, -1)
+    curses.init_pair(COL_GREEN, curses.COLOR_GREEN, -1)
+    curses.init_pair(COL_BLACK, curses.COLOR_BLACK, -1)
 
 def single_view_main(stdscr, args):
     curses_init()
@@ -877,14 +922,12 @@ def diff_view_main(stdscr, args):
     rbuf = TraceViewer(rwin, strip_packet_no(args.fileb))
 
     pdml = args.mode == 'pdml'
-    pdmldiff = PDMLDiff()
     resize = False
-
     bwin = curses.newwin(bh, W, th+1, 0)
 
+
     if pdml:
-        bbuf = BufferViewerCSIColors(bwin, "", diff=True)
-        bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(), rbuf.get_packet()))
+        bbuf = DiffViewer(bwin)
     else:
         bbuf = BufferViewer(bwin, "", diff=True)
         bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
@@ -934,14 +977,12 @@ def diff_view_main(stdscr, args):
             lbuf.move(-1)
             rbuf.move(-1)
 
+        elif k == KEY['toggle_ignore']:
+            bbuf.toggle_ignore_field()
+
         elif k == 'KEY_RESIZE':
             resize = True
 
-        elif k == 'a':
-            for element in pdmldiff.getignorable_fields():
-                if element in bbuf.getselected():
-                    pdmldiff.setignored_fields(element)
-            bbuf.refresh()
 
         if resize:
             H, W = stdscr.getmaxyx()
@@ -955,12 +996,11 @@ def diff_view_main(stdscr, args):
 
         if lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket:
             if pdml:
-                data = pdmldiff.smb_diff(lbuf.get_packet(),
-                                         rbuf.get_packet())
+                bbuf.diff_packets(lbuf.get_packet(), rbuf.get_packet())
             else:
-                data = smb_diff(lbuf.get_packet(),
-                                rbuf.get_packet())
-            bbuf.set_data(data)
+                bbuf.set_data(smb_diff(lbuf.get_packet(),
+                                       rbuf.get_packet()))
+
 
 
 def debug():

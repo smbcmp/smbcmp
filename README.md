@@ -57,6 +57,8 @@ Default keybindings (see Configuration to change them):
 - down/up: next/prev line in both left and right panes at the same time
 - b/n: next/prev line in bottom pane
 - Use PgUp/PgDown to change the vertical position of the split
+- While diffing 2 traces in pdml mode, you can use 'a' to ignore the
+  field under the cursor. Press a again to stop ignoring it.
 
 
 Configuration
@@ -87,3 +89,4 @@ Sample config file with the default values.
     key_bwin_prev = n
     key_vsplit_up = KEY_PPAGE
     key_vsplit_down = KEY_NPAGE
+    key_toggle_ignore = a
