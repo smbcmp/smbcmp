@@ -246,14 +246,11 @@ def smb_summaries(pcap):
 
 @functools.lru_cache(maxsize=128)
 def smb_packet(pcap, no, pdml=False):
-    """ Show the content of a packet
+    """Show the content of a packet
 
     Keyword arguments
-
     pcap -- name of the capture file
-
     no -- number of the packet
-
     """
     cmd = tshark(*tshark_keys_opts())
     cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d' % no, '-V']
@@ -399,20 +396,11 @@ class BufferViewerCSIColors(BufferViewer):
 
 
 class TraceViewer(object):
-    """ Browse packet names of a capture file with a cursor
+    """Browse packet names of a capture file with a cursor
 
     Keyword arguments:
-
-    win -- the windows object representing the part of the screen occupied
-
+    win -- curses windows object to display on
     cap -- name of the capture file
-
-    buf -- content of the window
-
-    nos -- ordered list of packets numbers
-
-    pkts -- set of numbered packets
-
     """
     def __init__(self, win, cap):
         self.buf = BufferViewer(win, '')
@@ -550,17 +538,9 @@ class Output:
 
 
 class PDMLDiff:
-    """ compute diffs between two PDML with smb* trees extracted
-
-    Class variable:
-
-    diffs -- dictionnary containing diffs
-    ignored_fields -- set of ignored fields while diffing
-    ignorable_fields -- set of ignorable fields populated while parsing trees
-    """
+    """Compute diffs between two captures using PDML output"""
 
     ignorable_fields = set()
-
     ignored_fields = set()
 
     def __init__(self):
@@ -605,7 +585,7 @@ class PDMLDiff:
                     *tuple(_pdml_to_node(x) for x in smb2))
 
     def smb_diff(self, a, b, pdml=False):
-        """ Show the diff between two packets
+        """Show the diff between two packets
 
         Keyword arguments:
 
@@ -967,7 +947,7 @@ def diff_view_main(stdscr, args):
 
 
 def clear(stdscr):
-    """ Disable curses while debugging
+    """Disable curses while debugging
 
     Keyword arguments:
 
