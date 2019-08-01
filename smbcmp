@@ -34,6 +34,7 @@ from itertools import zip_longest
 
 TSHARK_FILTER_FLAG = None
 DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
+DEFAULT_MODE = 'text'
 KEY = {}
 CONF = configparser.ConfigParser()
 CRYPTO_KEY = {}
@@ -229,6 +230,13 @@ def multiline_mod(a, b, ignored=False):
         out.append(rem+aa+COL_END+mid+add+bb+COL_END+"\n")
         i += 1
     return ''.join(out)
+
+
+def smb_diff(a, b):
+    lines = difflib.unified_diff(smb_packet(a[0], a[1]).split("\n"),
+                                 smb_packet(b[0], b[1]).split("\n"),
+                                 a[0], b[0], lineterm="")
+    return "\n".join(lines)
 
 
 @functools.lru_cache(maxsize=128)
@@ -641,9 +649,7 @@ class PDMLDiff:
             ign = True
         return (eq, ign)
 
-    def trace_diff(self, trace_a, trace_b):
-        root_a = trace_a
-        root_b = trace_b
+    def trace_diff(self, root_a, root_b):
         output = Output()
 
         def rec_diff(a, b, n=0):
@@ -870,12 +876,19 @@ def diff_view_main(stdscr, args):
     rwin = curses.newwin(th, rw, 0, lw+1)
     rbuf = TraceViewer(rwin, strip_packet_no(args.fileb))
 
+    pdml = args.mode == 'pdml'
     pdmldiff = PDMLDiff()
-    bwin = curses.newwin(bh, W, th+1, 0)
-    bbuf = BufferViewerCSIColors(bwin, "", diff=True)
     resize = False
-    bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(), rbuf.get_packet(),
-                                    pdml=True))
+
+    bwin = curses.newwin(bh, W, th+1, 0)
+
+    if pdml:
+        bbuf = BufferViewerCSIColors(bwin, "", diff=True)
+        bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(), rbuf.get_packet()))
+    else:
+        bbuf = BufferViewer(bwin, "", diff=True)
+        bbuf.set_data(smb_diff(lbuf.get_packet(), rbuf.get_packet()))
+
     while True:
         rbuf.refresh()
         lbuf.refresh()
@@ -941,9 +954,13 @@ def diff_view_main(stdscr, args):
             resize = False
 
         if lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket:
-            bbuf.set_data(pdmldiff.smb_diff(lbuf.get_packet(),
-                                            rbuf.get_packet(),
-                                            pdml=True))
+            if pdml:
+                data = pdmldiff.smb_diff(lbuf.get_packet(),
+                                         rbuf.get_packet())
+            else:
+                data = smb_diff(lbuf.get_packet(),
+                                rbuf.get_packet())
+            bbuf.set_data(data)
 
 
 def debug():
@@ -956,6 +973,8 @@ def debug():
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='compare smb packets')
+    ap.add_argument('-m', '--mode',
+                    help='diff method (default %s)'%DEFAULT_MODE, default=DEFAULT_MODE, choices=['text', 'pdml'])
     ap.add_argument('-c', '--config',
                     help='read alternative config file (default %s)'%DEFAULT_CONFIG)
     ap.add_argument('-k', '--key', metavar='KEYPAIR',
