@@ -11,17 +11,17 @@ Small curses utility to diff, compare and debug SMB network traces.
 Install
 =======
 
-    git clone https://github.com/aaptel/smbcmp.git
-    cd smbcmp
-    python3 -m venv .
-    source ./bin/activate 
-    pip3 install -r requirements.txt
-    chmod +x smbcmp
+    $ git clone https://github.com/aaptel/smbcmp.git
+    $ cd smbcmp
+    $ python3 -m venv .venv
+    $ source .venv/bin/activate
+    $ pip3 install -r requirements.txt
 
 Dependencies:
 - python3
-- tshark (wireshark)
 - python3-curses
+- python3-lxml (optionnal)
+- tshark (wireshark)
 
 Usage
 =====
@@ -41,7 +41,9 @@ Features
 - Based on wireshark (tshark): supports SMB1/2/3
 - Decryption support
   - pass sesid/keys via command line option
-  - can parse keys from linux kernel console (requires CONFIG_CIFS_DEBUG_DUMP_KEYS enabled)
+  - can parse crypto keys
+    - from linux kernel console (requires `CONFIG_CIFS_DEBUG_DUMP_KEYS` enabled)
+    - from samba/smbclient (`--option=debugencryption=yes`)
 - Highlights non-sucessful responses
 
 
