@@ -946,17 +946,12 @@ def diff_view_main(stdscr, args):
                                             pdml=True))
 
 
-def clear(stdscr):
-    """Disable curses while debugging
-
-    Keyword arguments:
-
-    stdscr -- the window object representing the entire screen
-    """
+def debug():
     curses.nocbreak()
-    stdscr.keypad(0)
     curses.echo()
     curses.endwin()
+    import pdb
+    pdb.set_trace()
 
 
 if __name__ == '__main__':
