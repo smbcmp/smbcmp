@@ -28,7 +28,10 @@ import os
 import configparser
 from subprocess import SubprocessError
 import difflib
-import xml.etree.ElementTree as ET
+try:
+  import lxml.etree.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
 from itertools import zip_longest
 
 TSHARK_FILTER_FLAG = None
