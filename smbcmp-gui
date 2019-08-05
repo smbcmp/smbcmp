@@ -1,0 +1,545 @@
+#!/usr/bin/env python3
+# GUI for smbcmp
+#
+# Copyright (C) 2019 Mairo Paul Rufus <akoudanilo@gmail.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import subprocess
+from subprocess import SubprocessError
+import os
+import configparser
+import re
+import functools
+
+import wx
+import wx.adv
+import wx.lib.mixins.listctrl
+
+import smbcmp
+
+
+TSHARK_FILTER_FLAG = None
+DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
+KEY = {}
+CONF = configparser.ConfigParser()
+DIFFLIB = 1
+PDML = 2
+
+
+def load_config_():
+    CONF.read(DEFAULT_CONFIG)
+
+    def k(name, default):
+        KEY[name] = CONF['global'].get('key_'+name, default)
+    k('lwin_next', 'd')
+    k('lwin_prev', 'f')
+    k('rwin_next', 'j')
+    k('rwin_prev', 'k')
+    k('top_next', 'KEY_DOWN')
+    k('top_prev', 'KEY_UP')
+    k('bwin_next', 'b')
+    k('bwin_prev', 'n')
+    k('vsplit_up', 'KEY_PPAGE')
+    k('vsplit_down', 'KEY_NPAGE')
+    k('toggle_ignore', 'a')
+
+
+def tshark_(*args):
+    binpath = CONF['global'].get('tshark_path', 'tshark')
+    return [binpath] + list(args)
+
+
+@functools.lru_cache(maxsize=128)
+def smb_summaries_(pcap):
+    cmd = tshark_()
+    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, '!browser && (smb||smb2)']
+    out = subprocess.check_output(cmd).decode('utf-8')
+    nos = []
+    pkts = []
+    for line in out.split('\n'):
+        m = re.match(r'''\s*(\d+).+?SMB2?\s*\d+\s*(.+)''', line)
+        if m:
+            nos.append(int(m.group(1)))
+            pkts.append(m.group(2))
+    return nos, pkts
+
+
+def wireshark_checks_():
+    try:
+        out = subprocess.check_output(tshark_('-h')).decode('utf-8')
+    except SubprocessError:
+        print("Can't run tshark, check if installed properly")
+        raise
+
+    if 'wireshark' not in out:
+        raise Exception("Unexpected tshark out, check if installed properly")
+    global TSHARK_FILTER_FLAG
+    if '-Y' in out:
+        TSHARK_FILTER_FLAG = '-Y'
+    else:
+        TSHARK_FILTER_FLAG = '-R'
+
+
+class TracePanel(wx.Panel):
+    """ Panel holding the summaries of the packets """
+    def __init__(self, *args, **kwds):
+        kwds["style"] = kwds.get("style", 0)
+        wx.Panel.__init__(self, *args, **kwds)
+        data = ["summary"]
+        self.nb = 1
+        self.cap = ""
+        self.nos = [1]
+        self.buffer = wx.ListBox(self, wx.ID_ANY, choices=data)
+        self.buffer.SetSelection(0)
+        self.debug = []
+        self.__set_properties()
+        self.__do_layout()
+
+    def __set_properties(self):
+        pass
+
+    def __do_layout(self):
+        sizer_1 = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_1.Add(self.buffer, 1, wx.ALL | wx.EXPAND, 5)
+        self.SetSizer(sizer_1)
+        sizer_1.Fit(self)
+        self.Layout()
+
+    def set_data(self, file_path):
+        """ Fill the Panel with smb summaries """
+        self.cap = file_path
+        self.nos, self.data = smb_summaries_(self.cap)
+        self.nb = len(self.data)
+        self.buffer.Clear()
+        self.buffer.InsertItems(items=self.data, pos=0)
+        self.buffer.SetSelection(0)
+
+    @property
+    def cap(self):
+        return self._cap
+
+    @cap.setter
+    def cap(self, value):
+        self._cap = value
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, value):
+        self._data = value
+
+    def permute_data(self, panel):
+        temp = self.data
+
+        self.data = panel.data
+        self.buffer.Clear()
+        self.buffer.InsertItems(items=self.data, pos=0)
+
+        panel.data = temp
+        panel.buffer.Clear()
+        panel.buffer.InsertItems(items=panel.data, pos=0)
+
+    def move(self, direction):
+        selected = self.buffer.GetSelection()
+        if direction + 1:   # From top to bottom
+            self.buffer.SetSelection((selected + 1) % self.nb)
+        elif selected > 0:
+            self.buffer.SetSelection(selected - 1)
+
+
+class MainFrame(wx.Frame):
+    def __init__(self, *args, **kwds):
+        kwds["style"] = kwds.get("style", 0) | wx.DEFAULT_FRAME_STYLE
+        wx.Frame.__init__(self, *args, **kwds)
+        load_config_()
+        wireshark_checks_()
+
+        self.lpanel = TracePanel(self, wx.ID_ANY)
+        self.rpanel = TracePanel(self, wx.ID_ANY)
+
+        self.data = ["diffs"]
+        self.bbuffer = DiffsBox(self, wx.ID_ANY,
+                                style=wx.LC_REPORT | wx.LC_SINGLE_SEL |
+                                wx.LC_ALIGN_LEFT)
+        self.__set_properties()
+        self.__do_layout()
+        self.create_menu()
+
+        @functools.lru_cache(maxsize=128)
+        def new_smb_packet(pcap, no, pdml=False):
+            cmd = tshark_()
+            cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d' % no, '-V']
+            if pdml:
+                cmd += ['-Tpdml']
+                return subprocess.check_output(cmd).decode('utf-8')
+            else:
+                out = subprocess.check_output(cmd).decode('utf-8')
+                out = re.sub(r'^[\s\S]+?\nSMB', 'SMB', out, re.S)
+                return out
+
+        # Monkey patch
+        smbcmp.smb_packet = new_smb_packet
+
+        self.rpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.lpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.bbuffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+
+    def on_key_press(self, event):
+        keycode = event.GetKeyCode()
+
+        if keycode == wx.WXK_DOWN:
+            self.rpanel.move(+1)
+            self.lpanel.move(+1)
+            self.refresh()
+        elif keycode == wx.WXK_UP:
+            self.rpanel.move(-1)
+            self.lpanel.move(-1)
+            self.refresh()
+
+        elif keycode == ord("D"):
+            self.lpanel.move(+1)
+            self.refresh()
+        elif keycode == ord("F"):
+            self.lpanel.move(-1)
+            self.refresh()
+            event.Skip()
+
+        elif keycode == ord("J"):
+            self.rpanel.move(+1)
+            self.refresh()
+        elif keycode == ord("K"):
+            self.rpanel.move(-1)
+            self.refresh()
+
+        elif keycode == ord("B"):
+            self.bbuffer.move(+1)
+        elif keycode == ord("N"):
+            self.bbuffer.move(-1)
+        else:
+            event.Skip()
+
+    def refresh(self):
+        if self.lpanel.cap and self.rpanel.cap:
+            selected_item_1 = self.lpanel.buffer.GetSelection()
+            selected_item_2 = self.rpanel.buffer.GetSelection()
+            self.bbuffer.refresh(self.print_diffs(selected_item_1,
+                                                  selected_item_2,
+                                                  self.bbuffer.diff_method))
+
+    @functools.lru_cache(maxsize=128)
+    def print_diffs(self, a, b, method=DIFFLIB):
+        """ print diffs
+
+        Keyword Arguments:
+
+        a -- number of the first paquet
+        b -- number of the second paquet
+        method -- type of diff
+        """
+        pkt_a = (self.lpanel.cap, self.lpanel.nos[a])
+        pkt_b = (self.rpanel.cap, self.rpanel.nos[b])
+        if method == DIFFLIB:
+            return smbcmp.smb_diff(pkt_a, pkt_b, gui=True)
+        elif method == PDML:
+            diffs = smbcmp.PDMLDiff(pkt_a, pkt_b)
+            out = diffs.smb_diff().get_text("\n").split("\n")
+            return out
+        else:
+            return "Unknown method"
+
+    def create_menu(self):
+        menu_bar = wx.MenuBar()
+
+        file_menu = wx.Menu()
+        open_file1_menu_item = file_menu.Append(
+            wx.ID_ANY, 'Open Capture &1',
+            'Open the first capture file'
+        )
+        open_file2_menu_item = file_menu.Append(
+            wx.ID_ANY, 'Open Capture &2',
+            'Open the second capture file'
+        )
+        permute_menu_item = file_menu.Append(
+            wx.ID_ANY, '&Permute',
+            'Permute the two panels')
+        close_menu_item = file_menu.Append(
+            wx.ID_ANY, "&Close",
+            "Close the application")
+        menu_bar.Append(file_menu, '&File')
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_open_file1,
+            source=open_file1_menu_item,
+        )
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_open_file2,
+            source=open_file2_menu_item)
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_permute,
+            source=permute_menu_item)
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_close,
+            source=close_menu_item
+        )
+
+        options_menu = wx.Menu()
+        engine_menu_item = options_menu.Append(
+            wx.ID_ANY, "&Engine",
+            "Configure the application")
+        colours_menu_item = options_menu.Append(
+            wx.ID_ANY, "&Colors",
+            "Change the colour scheme")
+        menu_bar.Append(options_menu, '&Options')
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_engine,
+            source=engine_menu_item)
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_colours,
+            source=colours_menu_item)
+
+        help_menu = wx.Menu()
+        about_menu_item = help_menu.Append(
+            wx.ID_ANY, "&About",
+            "Open the about Box")
+        menu_bar.Append(help_menu, '&Help')
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_about,
+            source=about_menu_item)
+
+        self.SetMenuBar(menu_bar)
+
+    def on_colours(self, event):
+        dlg1 = wx.ColourDialog(self)
+        if dlg1.ShowModal() == wx.ID_OK:
+            colour = dlg1.GetColourData().GetColour()
+            self.bbuffer.colour1 = colour
+        dlg2 = wx.ColourDialog(self)
+        if dlg2.ShowModal() == wx.ID_OK:
+            colour = dlg2.GetColourData().GetColour()
+            self.bbuffer.colour2 = colour
+
+    def on_engine(self, event):
+        dlg = ChooseEngineDialog(None,
+                                 title='Choose a diffs engine')
+        dlg.ShowModal()
+        self.bbuffer.diff_method = dlg.choice
+        dlg.Destroy()
+
+    def on_open_file1(self, event):
+        title = "Choose a capture file :"
+        dlg = wx.FileDialog(self,
+                            message=title,
+                            defaultDir="~",
+                            style=wx.DD_DEFAULT_STYLE)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.lpanel.set_data(dlg.GetPath())
+        dlg.Destroy()
+
+    def on_open_file2(self, event):
+        title = "Choose a capture file :"
+        dlg = wx.FileDialog(self,
+                            message=title,
+                            defaultDir="~",
+                            style=wx.DD_DEFAULT_STYLE)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.rpanel.set_data(dlg.GetPath())
+        dlg.Destroy()
+
+    def on_permute(self, event):
+        self.lpanel.permute_data(self.rpanel)
+
+    def on_close(self, event):
+        self.Close()
+
+    def on_about(self, event):
+        info = wx.adv.AboutDialogInfo()
+        info.Name = "About"
+        info.Version = "0.0.1 Beta"
+        info.Copyright = "(C) 2019 Mairo Paul Rufus akoudanilo@gmail.com"
+        info.Description = f"This is a frontend GUI for smbcmp"
+        f"For navigation you can use its default shortcuts"
+        info.WebSite = ("https://www.github.com/aaptel/smbcmp",
+                        "Project homepage")
+        info.Developers = ["RMPR"]
+        info.License = f"GNU General Public License V3"
+        # Show the wx.AboutBox
+        wx.adv.AboutBox(info)
+
+    def __set_properties(self):
+        self.SetTitle("smbcmp")
+
+    def __do_layout(self):
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer_top = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_top.Add(self.lpanel, 1, wx.EXPAND, 0)
+        sizer_top.Add(self.rpanel, 1, wx.EXPAND, 0)
+        main_sizer.Add(sizer_top, 1, wx.EXPAND, 0)
+        main_sizer.Add(self.bbuffer, 1, wx.ALL | wx.EXPAND, 15)
+        self.SetSizer(main_sizer)
+        main_sizer.Fit(self)
+        self.Layout()
+
+
+class DiffsBox(wx.ListCtrl):
+
+    def __init__(self, *args, **kwargs):
+        super(DiffsBox, self).__init__(*args, **kwargs)
+        self.data = ["diffs"]
+        self.selection = 0
+        self.nb = len(self.data)
+        self.diff_method = DIFFLIB
+        self._set_title()
+        self.colour1 = wx.GREEN
+        self.colour2 = wx.RED
+
+    def InsertItems(self, data, start):
+        self._set_title()
+        i = start
+        if self.diff_method == DIFFLIB:
+            for element in data:
+                self.InsertItem(i, element)
+                if element[0] == "+":
+                    self.SetItemBackgroundColour(i, self.colour1)
+                elif element[0] == "-":
+                    self.SetItemBackgroundColour(i, self.colour2)
+                i += 1
+            self.SetColumnWidth(0, wx.LIST_AUTOSIZE)
+
+    def move(self, direction):
+        if direction + 1:
+            self.Select(self.selection, on=False)
+            self.selection += 1
+            self.Select(self.selection % self.nb)
+        elif self.selection > 0:
+            self.Select(self.selection, on=False)
+            self.selection -= 1
+            self.Select(self.selection % self.nb)
+
+    def refresh(self, data):
+        self.selection = 0
+        self.data = data
+        self.nb = len(self.data)
+        self.ClearAll()
+        self.InsertItems(self.data, 0)
+        self.Select(self.selection)
+
+    @property
+    def colour2(self):
+        return self._colour2
+
+    @colour2.setter
+    def colour2(self, value):
+        self._colour2 = value
+
+    @property
+    def colour1(self):
+        return self._colour1
+
+    @colour1.setter
+    def colour1(self, value):
+        self._colour1 = value
+
+    @property
+    def diff_method(self):
+        return self._diff_method
+
+    @diff_method.setter
+    def diff_method(self, value):
+        self._diff_method = value
+
+    def _set_title(self, title="Diffs"):
+        # font = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT)
+        self.selection = 0
+        self.InsertColumn(0, title)
+        self.SetColumnWidth(0, -3)
+
+
+class ChooseEngineDialog(wx.Dialog):
+
+    def __init__(self, *args, **kwargs):
+        super(ChooseEngineDialog, self).__init__(*args, **kwargs)
+
+        self.choice = self.DIFFLIB
+        self.InitUI()
+        self.SetSize((250, 200))
+        self.SetTitle("Choose Diffs Engine")
+
+    def InitUI(self):
+        pnl = wx.Panel(self)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        sb = wx.StaticBox(pnl, label='Engines')
+        sbs = wx.StaticBoxSizer(sb, orient=wx.VERTICAL)
+
+        self.radio = wx.RadioButton(pnl, label='Difflib', style=wx.RB_GROUP)
+        self.radio2 = wx.RadioButton(pnl, label='Pdml')
+        sbs.Add(self.radio)
+        sbs.Add(self.radio2)
+
+        pnl.SetSizer(sbs)
+
+        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+        okButton = wx.Button(self, label='Ok')
+        closeButton = wx.Button(self, label='Close')
+        hbox2.Add(okButton)
+        hbox2.Add(closeButton, flag=wx.LEFT, border=5)
+
+        vbox.Add(pnl, proportion=1, flag=wx.ALL | wx.EXPAND, border=5)
+        vbox.Add(hbox2, flag=wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, border=10)
+
+        self.SetSizer(vbox)
+
+        okButton.Bind(wx.EVT_BUTTON, self.on_btn_ok)
+        closeButton.Bind(wx.EVT_BUTTON, self.on_close)
+
+    def on_btn_ok(self, event):
+        if self.radio.GetValue():
+            self.choice = DIFFLIB
+        elif self.radio2.GetValue():
+            self.choice = PDML
+        self.Destroy()
+
+    def on_close(self, e):
+        self.Destroy()
+
+    @property
+    def choice(self):
+        return self._choice
+
+    @choice.setter
+    def choice(self, value):
+        self._choice = value
+
+
+class Smbcmp(wx.App):
+    def OnInit(self):
+        self.frame = MainFrame(None, wx.ID_ANY, "")
+        self.SetTopWindow(self.frame)
+        self.frame.Show()
+        return True
+
+
+if __name__ == "__main__":
+    app = Smbcmp(0)
+    app.MainLoop()
+

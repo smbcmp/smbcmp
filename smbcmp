@@ -40,6 +40,7 @@ CONF = configparser.ConfigParser()
 CONF.add_section('global')
 CRYPTO_KEY = {}
 
+
 def load_config(fn):
     CONF.read(fn)
 
@@ -213,10 +214,12 @@ def multiline_mod(a, b, ignored=False):
     return ''.join(out)
 
 
-def smb_diff(a, b):
+def smb_diff(a, b, gui=False):
     lines = difflib.unified_diff(smb_packet(a[0], a[1]).split("\n"),
                                  smb_packet(b[0], b[1]).split("\n"),
                                  a[0], b[0], lineterm="")
+    if gui:
+        return list(lines)
     return "\n".join(lines)
 
 
@@ -540,8 +543,8 @@ class DiffOutput:
 
         return self.items[-1]
 
-    def get_text(self):
-        return ''.join([x.text for x in self.items])
+    def get_text(self, sep=''):
+        return sep.join([x.text for x in self.items])
 
     def dump(self, mode, node, ignored=False, indent=0):
         """Recursively dump a node.
