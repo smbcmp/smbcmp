@@ -128,7 +128,7 @@ def load_crypto_keys(args):
     try:
         dmesg = subprocess.check_output(["dmesg"]).decode("utf-8")
         CRYPTO_KEY.update(extract_kernel_keys(dmesg))
-    except SubprocessError:
+    except:
         pass
 
     for kp in args.key:
