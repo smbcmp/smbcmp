@@ -2,6 +2,7 @@
 # GUI for smbcmp
 #
 # Copyright (C) 2019 Mairo Paul Rufus <akoudanilo@gmail.com>
+# Copyright (C) 2019 Aurelien Aptel <aurelien.aptel@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,6 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+
 import subprocess
 from subprocess import SubprocessError
 import os
@@ -26,71 +28,18 @@ import functools
 import wx
 import wx.adv
 import wx.lib.mixins.listctrl
-
 import smbcmp
 
-
-TSHARK_FILTER_FLAG = None
-DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
-KEY = {}
-CONF = configparser.ConfigParser()
 DIFFLIB = 1
 PDML = 2
 
+ARGS = None
 
-def load_config_():
-    CONF.read(DEFAULT_CONFIG)
-
-    def k(name, default):
-        KEY[name] = CONF['global'].get('key_'+name, default)
-    k('lwin_next', 'd')
-    k('lwin_prev', 'f')
-    k('rwin_next', 'j')
-    k('rwin_prev', 'k')
-    k('top_next', 'KEY_DOWN')
-    k('top_prev', 'KEY_UP')
-    k('bwin_next', 'b')
-    k('bwin_prev', 'n')
-    k('vsplit_up', 'KEY_PPAGE')
-    k('vsplit_down', 'KEY_NPAGE')
-    k('toggle_ignore', 'a')
-
-
-def tshark_(*args):
-    binpath = CONF['global'].get('tshark_path', 'tshark')
-    return [binpath] + list(args)
-
-
-@functools.lru_cache(maxsize=128)
-def smb_summaries_(pcap):
-    cmd = tshark_()
-    cmd += ['-r', pcap, TSHARK_FILTER_FLAG, '!browser && (smb||smb2)']
-    out = subprocess.check_output(cmd).decode('utf-8')
-    nos = []
-    pkts = []
-    for line in out.split('\n'):
-        m = re.match(r'''\s*(\d+).+?SMB2?\s*\d+\s*(.+)''', line)
-        if m:
-            nos.append(int(m.group(1)))
-            pkts.append(m.group(2))
-    return nos, pkts
-
-
-def wireshark_checks_():
-    try:
-        out = subprocess.check_output(tshark_('-h')).decode('utf-8')
-    except SubprocessError:
-        print("Can't run tshark, check if installed properly")
-        raise
-
-    if 'wireshark' not in out:
-        raise Exception("Unexpected tshark out, check if installed properly")
-    global TSHARK_FILTER_FLAG
-    if '-Y' in out:
-        TSHARK_FILTER_FLAG = '-Y'
-    else:
-        TSHARK_FILTER_FLAG = '-R'
-
+def main():
+    global ARGS
+    ARGS = smbcmp.parse_args(gui=True)
+    app = Smbcmp(0)
+    app.MainLoop()
 
 class TracePanel(wx.Panel):
     """ Panel holding the summaries of the packets """
@@ -120,7 +69,11 @@ class TracePanel(wx.Panel):
     def set_data(self, file_path):
         """ Fill the Panel with smb summaries """
         self.cap = file_path
-        self.nos, self.data = smb_summaries_(self.cap)
+
+        pkts = smbcmp.smb_summaries(self.cap)
+        self.nos = sorted(pkts.keys())
+        self.data = [pkts[x] for x in self.nos]
+
         self.nb = len(self.data)
         self.buffer.Clear()
         self.buffer.InsertItems(items=self.data, pos=0)
@@ -165,8 +118,6 @@ class MainFrame(wx.Frame):
     def __init__(self, *args, **kwds):
         kwds["style"] = kwds.get("style", 0) | wx.DEFAULT_FRAME_STYLE
         wx.Frame.__init__(self, *args, **kwds)
-        load_config_()
-        wireshark_checks_()
 
         self.lpanel = TracePanel(self, wx.ID_ANY)
         self.rpanel = TracePanel(self, wx.ID_ANY)
@@ -179,24 +130,16 @@ class MainFrame(wx.Frame):
         self.__do_layout()
         self.create_menu()
 
-        @functools.lru_cache(maxsize=128)
-        def new_smb_packet(pcap, no, pdml=False):
-            cmd = tshark_()
-            cmd += ['-r', pcap, TSHARK_FILTER_FLAG, 'frame.number == %d' % no, '-V']
-            if pdml:
-                cmd += ['-Tpdml']
-                return subprocess.check_output(cmd).decode('utf-8')
-            else:
-                out = subprocess.check_output(cmd).decode('utf-8')
-                out = re.sub(r'^[\s\S]+?\nSMB', 'SMB', out, re.S)
-                return out
-
-        # Monkey patch
-        smbcmp.smb_packet = new_smb_packet
-
         self.rpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
         self.lpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
         self.bbuffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+
+        if ARGS.filea:
+            self.lpanel.set_data(ARGS.filea)
+        if ARGS.fileb:
+            self.rpanel.set_data(ARGS.fileb)
+        if ARGS.filea and ARGS.fileb:
+            self.refresh()        
 
     def on_key_press(self, event):
         keycode = event.GetKeyCode()
@@ -252,6 +195,7 @@ class MainFrame(wx.Frame):
         """
         pkt_a = (self.lpanel.cap, self.lpanel.nos[a])
         pkt_b = (self.rpanel.cap, self.rpanel.nos[b])
+        #import pdb; pdb.set_trace()
         if method == DIFFLIB:
             return smbcmp.smb_diff(pkt_a, pkt_b, gui=True)
         elif method == PDML:
@@ -341,12 +285,13 @@ class MainFrame(wx.Frame):
     def on_engine(self, event):
         dlg = ChooseEngineDialog(None,
                                  title='Choose a diffs engine')
+        dlg.choice = self.bbuffer.diff_method
         dlg.ShowModal()
         self.bbuffer.diff_method = dlg.choice
         dlg.Destroy()
 
     def on_open_file1(self, event):
-        title = "Choose a capture file :"
+        title = "Choose a capture file:"
         dlg = wx.FileDialog(self,
                             message=title,
                             defaultDir="~",
@@ -356,7 +301,7 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def on_open_file2(self, event):
-        title = "Choose a capture file :"
+        title = "Choose a capture file:"
         dlg = wx.FileDialog(self,
                             message=title,
                             defaultDir="~",
@@ -441,7 +386,8 @@ class DiffsBox(wx.ListCtrl):
         self.nb = len(self.data)
         self.ClearAll()
         self.InsertItems(self.data, 0)
-        self.Select(self.selection)
+        if self.nb > 0:
+            self.Select(self.selection)
 
     @property
     def colour2(self):
@@ -478,8 +424,6 @@ class ChooseEngineDialog(wx.Dialog):
 
     def __init__(self, *args, **kwargs):
         super(ChooseEngineDialog, self).__init__(*args, **kwargs)
-
-        self.choice = self.DIFFLIB
         self.InitUI()
         self.SetSize((250, 200))
         self.SetTitle("Choose Diffs Engine")
@@ -540,6 +484,4 @@ class Smbcmp(wx.App):
 
 
 if __name__ == "__main__":
-    app = Smbcmp(0)
-    app.MainLoop()
-
+    main()
