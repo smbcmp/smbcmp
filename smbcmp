@@ -27,7 +27,7 @@ import os
 from subprocess import SubprocessError
 import difflib
 try:
-  import lxml.etree.ElementTree as ET
+    import lxml.etree.ElementTree as ET
 except ImportError:
     import xml.etree.ElementTree as ET
 from itertools import zip_longest
@@ -37,6 +37,7 @@ DEFAULT_CONFIG = os.path.expanduser("~/.smbcmp")
 DEFAULT_MODE = 'text'
 KEY = {}
 CONF = configparser.ConfigParser()
+CONF.add_section('global')
 CRYPTO_KEY = {}
 
 def load_config(fn):
