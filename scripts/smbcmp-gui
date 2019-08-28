@@ -117,6 +117,7 @@ class TracePanel(wx.Panel):
 class MainFrame(wx.Frame):
     def __init__(self, *args, **kwds):
         kwds["style"] = kwds.get("style", 0) | wx.DEFAULT_FRAME_STYLE
+        kwds["size"] = wx.DefaultSize
         wx.Frame.__init__(self, *args, **kwds)
 
         self.lpanel = TracePanel(self, wx.ID_ANY)
@@ -195,7 +196,6 @@ class MainFrame(wx.Frame):
         """
         pkt_a = (self.lpanel.cap, self.lpanel.nos[a])
         pkt_b = (self.rpanel.cap, self.rpanel.nos[b])
-        #import pdb; pdb.set_trace()
         if method == DIFFLIB:
             return smbcmp.smb_diff(pkt_a, pkt_b, gui=True)
         elif method == PDML:
@@ -285,7 +285,6 @@ class MainFrame(wx.Frame):
     def on_engine(self, event):
         dlg = ChooseEngineDialog(None,
                                  title='Choose a diffs engine')
-        dlg.choice = self.bbuffer.diff_method
         dlg.ShowModal()
         self.bbuffer.diff_method = dlg.choice
         dlg.Destroy()
@@ -346,7 +345,7 @@ class MainFrame(wx.Frame):
 
 
 class DiffsBox(wx.ListCtrl):
-
+    """ Bottom Panel which display diffs """
     def __init__(self, *args, **kwargs):
         super(DiffsBox, self).__init__(*args, **kwargs)
         self.data = ["diffs"]
@@ -368,17 +367,36 @@ class DiffsBox(wx.ListCtrl):
                 elif element[0] == "-":
                     self.SetItemBackgroundColour(i, self.colour2)
                 i += 1
-            self.SetColumnWidth(0, wx.LIST_AUTOSIZE)
+
+        elif self.diff_method == PDML:
+            next_colour = wx.TransparentColour
+            for element in data:
+                print(element)
+                # \x1b[32m green
+                # \x1b[31m red
+                if element:
+                    self.InsertItem(i, element)
+                    self.SetItemBackgroundColour(i, next_colour)
+                    i += 1
+
+        else:
+            self.InsertItem(i, "Unknown Diff method")
+
+        self.SetColumnWidth(0, wx.LIST_AUTOSIZE)
+
 
     def move(self, direction):
         if direction + 1:
             self.Select(self.selection, on=False)
             self.selection += 1
-            self.Select(self.selection % self.nb)
+            self.selection %= self.nb
+            self.Select(self.selection)
+            self.Focus(self.selection)
         elif self.selection > 0:
             self.Select(self.selection, on=False)
             self.selection -= 1
             self.Select(self.selection % self.nb)
+            self.Focus(self.selection)
 
     def refresh(self, data):
         self.selection = 0
@@ -421,9 +439,12 @@ class DiffsBox(wx.ListCtrl):
 
 
 class ChooseEngineDialog(wx.Dialog):
+    """ Dialog box which allows to choose diffing methods"""
 
     def __init__(self, *args, **kwargs):
         super(ChooseEngineDialog, self).__init__(*args, **kwargs)
+
+        self.choice = DIFFLIB
         self.InitUI()
         self.SetSize((250, 200))
         self.SetTitle("Choose Diffs Engine")
