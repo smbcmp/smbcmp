@@ -369,15 +369,20 @@ class DiffsBox(wx.ListCtrl):
                 i += 1
 
         elif self.diff_method == PDML:
-            next_colour = wx.TransparentColour
+            ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
             for element in data:
-                print(element)
-                # \x1b[32m green
-                # \x1b[31m red
                 if element:
-                    self.InsertItem(i, element)
-                    self.SetItemBackgroundColour(i, next_colour)
-                    i += 1
+                    line = ansi_escape.sub("", element)
+                    if line:
+                        print(f"{i} = {line}")
+                        self.InsertItem(i, line)
+                        if "+" in line:
+                            self.SetItemBackgroundColour(i, self.colour1)
+                        elif "-" in line:
+                            self.SetItemBackgroundColour(i, self.colour2)
+                        elif "→" in line:
+                            self.SetItemTextColour(i, self.colour1)
+                        i += 1
 
         else:
             self.InsertItem(i, "Unknown Diff method")
