@@ -353,8 +353,8 @@ class DiffsBox(wx.ListCtrl):
         self.nb = len(self.data)
         self.diff_method = DIFFLIB
         self._set_title()
-        self.colour1 = wx.GREEN
-        self.colour2 = wx.RED
+        self.colour1 = wx.Colour(5, 125, 5)
+        self.colour2 = wx.Colour(125, 5, 5)
 
     def InsertItems(self, data, start):
         self._set_title()
