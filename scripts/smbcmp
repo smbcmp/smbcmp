@@ -69,7 +69,13 @@ def single_view_main(stdscr, args):
     bwin = curses.newwin(bh, W, th+1, 0)
     bbuf = BufferViewer(bwin, "")
     resize = False
-    bbuf.set_data(smbcmp.smb_packet(*tbuf.get_packet()))
+
+    empty = tbuf.is_empty()
+    if empty:
+        tbuf.buf.set_data("No SMB packet in capture")
+        bbuf.set_data("No SMB packet")
+    else:
+        bbuf.set_data(smbcmp.smb_packet(*tbuf.get_packet()))
 
     while True:
         stdscr.refresh()
@@ -79,7 +85,8 @@ def single_view_main(stdscr, args):
         # y, x, ch, length
         stdscr.hline(th, 0, 0, W)
 
-        last_packet = tbuf.get_packet()[1]
+        if not empty:
+            last_packet = tbuf.get_packet()[1]
 
         k = stdscr.getkey()
         if k == 'q':
@@ -113,7 +120,7 @@ def single_view_main(stdscr, args):
             bwin.mvwin(th+1, 0)
             resize = False
 
-        if tbuf.get_packet()[1] != last_packet:
+        if not empty and tbuf.get_packet()[1] != last_packet:
             bbuf.set_data(smbcmp.smb_packet(*tbuf.get_packet()))
 
 def diff_view_main(stdscr, args):
@@ -135,11 +142,18 @@ def diff_view_main(stdscr, args):
     bwin = curses.newwin(bh, W, th+1, 0)
 
 
+    empty = lbuf.is_empty() or rbuf.is_empty()
+    if lbuf.is_empty():
+        lbuf.buf.set_data("No SMB packet in capture")
+    if rbuf.is_empty():
+        rbuf.buf.set_data("No SMB packet in capture")
+
     if pdml:
         bbuf = DiffViewer(bwin)
     else:
         bbuf = BufferViewer(bwin, "", diff=True)
-        bbuf.set_data(smbcmp.smb_diff(lbuf.get_packet(), rbuf.get_packet()))
+        if not empty:
+            bbuf.set_data(smbcmp.smb_diff(lbuf.get_packet(), rbuf.get_packet()))
 
     while True:
         rbuf.refresh()
@@ -150,8 +164,9 @@ def diff_view_main(stdscr, args):
         stdscr.vline(0, lw, 0, th)
         stdscr.hline(th, 0, 0, W)
 
-        last_lpacket = lbuf.get_packet()[1]
-        last_rpacket = rbuf.get_packet()[1]
+        if not empty:
+            last_lpacket = lbuf.get_packet()[1]
+            last_rpacket = rbuf.get_packet()[1]
 
         k = stdscr.getkey()
         if k == 'q':
@@ -203,7 +218,7 @@ def diff_view_main(stdscr, args):
             bwin.mvwin(th+1, 0)
             resize = False
 
-        if lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket:
+        if not empty and (lbuf.get_packet()[1] != last_lpacket or rbuf.get_packet()[1] != last_rpacket):
             if pdml:
                 bbuf.diff_packets(lbuf.get_packet(), rbuf.get_packet())
             else:
@@ -395,6 +410,9 @@ class TraceViewer(object):
         for no in self.nos:
             lines.append(self.pkts[no])
         self.buf.set_data('\n'.join(lines))
+
+    def is_empty(self):
+        return len(self.nos) == 0
 
     def get_packet(self):
         return (self.cap, self.nos[self.buf.cursor])
