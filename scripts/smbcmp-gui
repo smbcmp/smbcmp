@@ -18,10 +18,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-import subprocess
-from subprocess import SubprocessError
-import os
-import configparser
 import re
 import functools
 
@@ -140,7 +136,7 @@ class MainFrame(wx.Frame):
         if ARGS.fileb:
             self.rpanel.set_data(ARGS.fileb)
         if ARGS.filea and ARGS.fileb:
-            self.refresh()        
+            self.refresh()
 
     def on_key_press(self, event):
         keycode = event.GetKeyCode()
