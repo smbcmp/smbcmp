@@ -149,33 +149,30 @@ class MainFrame(wx.Frame):
         if keycode == wx.WXK_DOWN:
             self.rpanel.move(+1)
             self.lpanel.move(+1)
-            self.refresh()
         elif keycode == wx.WXK_UP:
             self.rpanel.move(-1)
             self.lpanel.move(-1)
-            self.refresh()
 
         elif keycode == ord("D"):
             self.lpanel.move(+1)
-            self.refresh()
         elif keycode == ord("F"):
             self.lpanel.move(-1)
-            self.refresh()
-            event.Skip()
 
         elif keycode == ord("J"):
             self.rpanel.move(+1)
-            self.refresh()
         elif keycode == ord("K"):
             self.rpanel.move(-1)
-            self.refresh()
 
         elif keycode == ord("B"):
             self.bbuffer.move(+1)
         elif keycode == ord("N"):
             self.bbuffer.move(-1)
+
         else:
             event.Skip()
+            return
+
+        self.refresh()
 
     def refresh(self):
         if self.lpanel.cap and self.rpanel.cap:
