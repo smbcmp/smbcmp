@@ -102,7 +102,7 @@ def single_view_main(stdscr, args):
             th_ratio += +.1
             resize = True
 
-        elif k == 'smbcmp.KEY_RESIZE':
+        elif k == 'KEY_RESIZE':
             resize = True
 
         if resize:
