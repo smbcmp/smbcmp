@@ -128,7 +128,9 @@ class MainFrame(wx.Frame):
         self.create_menu()
 
         self.rpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.rpanel.buffer.Bind(wx.EVT_LISTBOX, self.on_summary_change)
         self.lpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.lpanel.buffer.Bind(wx.EVT_LISTBOX, self.on_summary_change)
         self.bbuffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
 
         if ARGS.filea:
@@ -137,6 +139,9 @@ class MainFrame(wx.Frame):
             self.rpanel.set_data(ARGS.fileb)
         if ARGS.filea and ARGS.fileb:
             self.refresh()
+
+    def on_summary_change(self, event):
+        self.refresh()
 
     def on_key_press(self, event):
         keycode = event.GetKeyCode()
