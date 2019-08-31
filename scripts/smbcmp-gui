@@ -22,6 +22,7 @@ import re
 import functools
 
 import wx
+import wx.stc
 import wx.adv
 import wx.lib.mixins.listctrl
 import smbcmp
@@ -42,12 +43,11 @@ class TracePanel(wx.Panel):
     def __init__(self, *args, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
-        data = ["No capture opened"]
-        self.nb = 1
         self.cap = ""
         self.nos = [1]
-        self.buffer = wx.ListBox(self, wx.ID_ANY, choices=data)
-        self.buffer.SetSelection(0)
+        self.data = []
+        self.buffer = wx.ListBox(self, wx.ID_ANY)
+        self._reset_items()
         self.debug = []
         self.__set_properties()
         self.__do_layout()
@@ -62,18 +62,27 @@ class TracePanel(wx.Panel):
         sizer_1.Fit(self)
         self.Layout()
 
+    def _reset_items(self):
+        self.buffer.Clear()
+
+        if self.cap == "":
+            self.buffer.InsertItems(items=["No capture opened"], pos=0)
+            return
+
+        if len(self.data) == 0:
+            self.buffer.InsertItems(items=["No SMB packets"], pos=0)
+            return
+
+        self.buffer.InsertItems(items=self.data, pos=0)
+        self.buffer.SetSelection(0)
+
     def set_data(self, file_path):
         """ Fill the Panel with smb summaries """
         self.cap = file_path
-
         pkts = smbcmp.smb_summaries(self.cap)
         self.nos = sorted(pkts.keys())
         self.data = [pkts[x] for x in self.nos]
-
-        self.nb = len(self.data)
-        self.buffer.Clear()
-        self.buffer.InsertItems(items=self.data, pos=0)
-        self.buffer.SetSelection(0)
+        self._reset_items()
 
     @property
     def cap(self):
@@ -91,21 +100,34 @@ class TracePanel(wx.Panel):
     def data(self, value):
         self._data = value
 
+    def get_selected_packet(self):
+        sel = self.buffer.GetSelection()
+        if self.cap and len(self.data) > 0 and sel >= 0:
+            return (self.cap, self.nos[sel])
+        return None
+
     def permute_data(self, panel):
-        temp = self.data
+        sel_self = self.buffer.GetSelection()
+        sel_panel = panel.buffer.GetSelection()
 
-        self.data = panel.data
-        self.buffer.Clear()
-        self.buffer.InsertItems(items=self.data, pos=0)
+        # swap user-data
+        self.nos, panel.nos = panel.nos, self.nos
+        self.data, panel.data = panel.data, self.data
+        self.cap, panel.cap = panel.cap, self.cap
 
-        panel.data = temp
-        panel.buffer.Clear()
-        panel.buffer.InsertItems(items=panel.data, pos=0)
+        # reset items and selection
+        self._reset_items()
+        panel._reset_items()
+        if sel_panel >= 0:
+            self.buffer.SetSelection(sel_panel)
+        if sel_self >= 0:
+            panel.buffer.SetSelection(sel_self)
+
 
     def move(self, direction):
         selected = self.buffer.GetSelection()
         if direction + 1:   # From top to bottom
-            self.buffer.SetSelection((selected + 1) % self.nb)
+            self.buffer.SetSelection((selected + 1) % len(self.data))
         elif selected > 0:
             self.buffer.SetSelection(selected - 1)
 
@@ -119,9 +141,7 @@ class MainFrame(wx.Frame):
         self.rpanel = TracePanel(self, wx.ID_ANY)
 
         self.data = ["diffs"]
-        self.bbuffer = DiffsBox(self, wx.ID_ANY,
-                                style=wx.LC_REPORT | wx.LC_SINGLE_SEL |
-                                wx.LC_ALIGN_LEFT)
+        self.bbuffer = DiffCtrl(self, wx.ID_ANY)
         self.__set_properties()
         self.__do_layout()
         self.SetSize(1000,800)
@@ -175,33 +195,21 @@ class MainFrame(wx.Frame):
         self.refresh()
 
     def refresh(self):
-        if self.lpanel.cap and self.rpanel.cap:
-            selected_item_1 = self.lpanel.buffer.GetSelection()
-            selected_item_2 = self.rpanel.buffer.GetSelection()
-            self.bbuffer.refresh(self.print_diffs(selected_item_1,
-                                                  selected_item_2,
-                                                  self.bbuffer.diff_method))
+        if not self.lpanel.cap or not self.rpanel.cap:
+            return
 
-    @functools.lru_cache(maxsize=128)
-    def print_diffs(self, a, b, method=DIFFLIB):
-        """ print diffs
+        pkt_a = self.lpanel.get_selected_packet()
+        pkt_b = self.rpanel.get_selected_packet()
 
-        Keyword Arguments:
+        if not pkt_a or not pkt_b:
+            return
 
-        a -- number of the first paquet
-        b -- number of the second paquet
-        method -- type of diff
-        """
-        pkt_a = (self.lpanel.cap, self.lpanel.nos[a])
-        pkt_b = (self.rpanel.cap, self.rpanel.nos[b])
-        if method == DIFFLIB:
-            return smbcmp.smb_diff(pkt_a, pkt_b, gui=True)
-        elif method == PDML:
-            diffs = smbcmp.PDMLDiff(pkt_a, pkt_b)
-            out = diffs.smb_diff().get_text("\n").split("\n")
-            return out
+        if self.bbuffer.diff_method == DIFFLIB:
+            self.bbuffer.refresh_difflib(smbcmp.smb_diff(pkt_a, pkt_b, gui=True))
+        elif self.bbuffer.diff_method == PDML:
+            self.bbuffer.refresh_pdml(smbcmp.PDMLDiff(pkt_a, pkt_b).smb_diff())
         else:
-            return "Unknown method"
+            raise Exception("Unknown method")
 
     def create_menu(self):
         menu_bar = wx.MenuBar()
@@ -216,8 +224,8 @@ class MainFrame(wx.Frame):
             'Open the second capture file'
         )
         permute_menu_item = file_menu.Append(
-            wx.ID_ANY, '&Permute',
-            'Permute the two panels')
+            wx.ID_ANY, '&Permute the two captures',
+            'Permute the two captures')
         close_menu_item = file_menu.Append(
             wx.ID_ANY, "&Close",
             "Close the application")
@@ -245,9 +253,9 @@ class MainFrame(wx.Frame):
         engine_menu_item = options_menu.Append(
             wx.ID_ANY, "&Engine",
             "Configure the application")
-        colours_menu_item = options_menu.Append(
+        colors_menu_item = options_menu.Append(
             wx.ID_ANY, "&Colors",
-            "Change the colour scheme")
+            "Change the color scheme")
         menu_bar.Append(options_menu, '&Options')
         self.Bind(
             event=wx.EVT_MENU,
@@ -255,8 +263,8 @@ class MainFrame(wx.Frame):
             source=engine_menu_item)
         self.Bind(
             event=wx.EVT_MENU,
-            handler=self.on_colours,
-            source=colours_menu_item)
+            handler=self.on_colors,
+            source=colors_menu_item)
 
         help_menu = wx.Menu()
         about_menu_item = help_menu.Append(
@@ -270,15 +278,15 @@ class MainFrame(wx.Frame):
 
         self.SetMenuBar(menu_bar)
 
-    def on_colours(self, event):
+    def on_colors(self, event):
         dlg1 = wx.ColourDialog(self)
         if dlg1.ShowModal() == wx.ID_OK:
-            colour = dlg1.GetColourData().GetColour()
-            self.bbuffer.colour1 = colour
+            color = dlg1.GetColourData().GetColour()
+            self.bbuffer.color_add = color
         dlg2 = wx.ColourDialog(self)
         if dlg2.ShowModal() == wx.ID_OK:
-            colour = dlg2.GetColourData().GetColour()
-            self.bbuffer.colour2 = colour
+            color = dlg2.GetColourData().GetColour()
+            self.bbuffer.color_rem = color
 
     def on_engine(self, event):
         dlg = ChooseEngineDialog(None,
@@ -309,6 +317,7 @@ class MainFrame(wx.Frame):
 
     def on_permute(self, event):
         self.lpanel.permute_data(self.rpanel)
+        self.refresh()
 
     def on_close(self, event):
         self.Close()
@@ -341,90 +350,39 @@ class MainFrame(wx.Frame):
         main_sizer.Fit(self)
         self.Layout()
 
-
-class DiffsBox(wx.ListCtrl):
-    """ Bottom Panel which display diffs """
+class DiffCtrl(wx.Panel):
     def __init__(self, *args, **kwargs):
-        super(DiffsBox, self).__init__(*args, **kwargs)
-        self.data = ["diffs"]
-        self.selection = 0
-        self.nb = len(self.data)
+        super(DiffCtrl, self).__init__(*args, **kwargs)
         self.diff_method = DIFFLIB
-        self._set_title()
-        self.colour1 = wx.Colour(0, 168, 107)  # red
-        self.colour2 = wx.Colour(255, 127, 127)  # green
-        self.colour3 = wx.Colour(0, 135, 189) # blue
+        self.txt = wx.stc.StyledTextCtrl(self, wx.ID_ANY, style=wx.EXPAND|wx.TE_MULTILINE|wx.TE_READONLY|wx.TE_DONTWRAP|wx.TE_RICH)
 
-    def InsertItems(self, data, start):
-        self._set_title()
-        i = start
-        if self.diff_method == DIFFLIB:
-            for element in data:
-                self.InsertItem(i, element)
-                if element[0] == "+":
-                    self.SetItemBackgroundColour(i, self.colour1)
-                elif element[0] == "-":
-                    self.SetItemBackgroundColour(i, self.colour2)
-                i += 1
+        #
+        # styling
+        #
+        self.style_normal = 0 # default
+        self.style_add = 2
+        self.style_rem = 3
+        self.color_add = wx.Colour(0, 168, 107)  # red
+        self.color_rem = wx.Colour(255, 127, 127)  # green
+        self.color_mod = wx.Colour(0, 135, 189) # blue
+        self.font = wx.Font(wx.FontInfo().Family(wx.FONTFAMILY_TELETYPE))
 
-        elif self.diff_method == PDML:
-            ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
-            for element in data:
-                if element:
-                    line = ansi_escape.sub("", element)
-                    if line:
-                        self.InsertItem(i, line)
-                        if "+" in line:
-                            self.SetItemBackgroundColour(i, self.colour1)
-                        elif "-" in line:
-                            self.SetItemBackgroundColour(i, self.colour2)
-                        elif "→" in line:
-                            self.SetItemTextColour(i, self.colour3)
-                        i += 1
+        #self.txt.StyleSetBackground(self.style_normal, wx.BLACK)
+        #self.txt.StyleSetEOLFilled(self.style_normal, True)
+        self.txt.StyleSetFont(self.style_normal, self.font)
+        self.txt.StyleSetBackground(self.style_add, self.color_add)
+        self.txt.StyleSetEOLFilled(self.style_add, True)
+        self.txt.StyleSetFont(self.style_add, self.font)
+        self.txt.StyleSetBackground(self.style_rem, self.color_rem)
+        self.txt.StyleSetEOLFilled(self.style_rem, True)
+        self.txt.StyleSetFont(self.style_rem, self.font)
 
-        else:
-            self.InsertItem(i, "Unknown Diff method")
+        self.txt.SetReadOnly(True)
+        self.txt.SetEditable(False)
 
-        self.SetColumnWidth(0, wx.LIST_AUTOSIZE)
-
-
-    def move(self, direction):
-        if direction + 1:
-            self.Select(self.selection, on=False)
-            self.selection += 1
-            self.selection %= self.nb
-            self.Select(self.selection)
-            self.Focus(self.selection)
-        elif self.selection > 0:
-            self.Select(self.selection, on=False)
-            self.selection -= 1
-            self.Select(self.selection % self.nb)
-            self.Focus(self.selection)
-
-    def refresh(self, data):
-        self.selection = 0
-        self.data = data
-        self.nb = len(self.data)
-        self.ClearAll()
-        self.InsertItems(self.data, 0)
-        if self.nb > 0:
-            self.Select(self.selection)
-
-    @property
-    def colour2(self):
-        return self._colour2
-
-    @colour2.setter
-    def colour2(self, value):
-        self._colour2 = value
-
-    @property
-    def colour1(self):
-        return self._colour1
-
-    @colour1.setter
-    def colour1(self, value):
-        self._colour1 = value
+        bsizer = wx.BoxSizer()
+        bsizer.Add(self.txt, 1, wx.EXPAND)
+        self.SetSizerAndFit(bsizer)
 
     @property
     def diff_method(self):
@@ -434,11 +392,95 @@ class DiffsBox(wx.ListCtrl):
     def diff_method(self, value):
         self._diff_method = value
 
-    def _set_title(self, title="Diffs"):
-        # font = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT)
-        self.selection = 0
-        self.InsertColumn(0, title)
-        self.SetColumnWidth(0, -3)
+    @property
+    def color_add(self):
+        return self._color_add
+
+    @color_add.setter
+    def color_add(self, value):
+        self.txt.StyleSetBackground(self.style_add, value)
+        self._color_add = value
+
+    @property
+    def color_rem(self):
+        return self._color_rem
+
+    @color_rem.setter
+    def color_rem(self, value):
+        self.txt.StyleSetBackground(self.style_rem, value)
+        self._color_rem = value
+
+    def move(self, *args):
+        pass
+
+    def _append_text(self, text, style=None):
+        start = self.txt.GetLength()
+        self.txt.AppendText(text)
+        nb = self.txt.GetLength() - start
+        if style:
+            self.txt.StartStyling(start, 31)
+            self.txt.SetStyling(nb, style)
+
+    def refresh_difflib(self, data):
+        self.txt.SetEditable(True)
+        self.txt.SetReadOnly(False)
+        self.txt.ClearAll()
+
+        for line in data:
+            style = None
+            if line[0] == "+":
+                style = self.style_add
+            elif line[0] == "-":
+                style = self.style_rem
+
+            self._append_text(line+"\n", style)
+
+        self.txt.SetEditable(False)
+        self.txt.SetReadOnly(True)
+
+    def refresh_pdml(self, data):
+        self.txt.SetEditable(True)
+        self.txt.SetReadOnly(False)
+        self.txt.ClearAll()
+
+        t_newline = 1
+        t_text = 2
+        t_esc = 3
+        rx = r'(\n)|([^\x1b\n]+)|(\x1b\[.+?m)'
+
+        # TODO: use DiffOutputItem data for better formating (tree-like structure)
+        data = data.get_text()
+
+        style = None
+        for tok in re.finditer(rx, data):
+            typ = tok.lastindex
+            val = tok.group()
+            if typ == t_text:
+                self._append_text(val, style)
+            elif typ == t_newline:
+                self._append_text("\n", style)
+            elif typ == t_esc:
+                assert(val[-1] == 'm')
+                for num in val[2:-1].split(';'):
+                    num = int(num)
+                    if num == 0:
+                        style = None
+                    elif num == 30:
+                        style = None
+                    elif num == 31:
+                        style = self.style_rem
+                    elif num == 32:
+                        style = self.style_add
+                    elif num == 1:
+                        # ignore for now
+                        pass
+                    else:
+                        raise Exception("unsupported CSI color")
+            else:
+                raise Exception("invalid token %d" % typ)
+
+        self.txt.SetEditable(False)
+        self.txt.SetReadOnly(True)
 
 
 class ChooseEngineDialog(wx.Dialog):
