@@ -331,15 +331,13 @@ class MainFrame(wx.Frame):
     def on_about(self, event):
         info = wx.adv.AboutDialogInfo()
         info.Name = "About"
-        info.Version = "0.0.1 Beta"
-        info.Copyright = "(C) 2019 Mairo Paul Rufus akoudanilo@gmail.com"
-        info.Description = f"This is a frontend GUI for smbcmp"
-        f"For navigation you can use its default shortcuts"
-        info.WebSite = ("https://www.github.com/aaptel/smbcmp",
-                        "Project homepage")
-        info.Developers = ["RMPR"]
-        info.License = f"GNU General Public License V3"
-        # Show the wx.AboutBox
+        info.Version = "smbcmp-gui v0.1"
+        info.Copyright = ("(C) 2019 Mairo Paul Rufus <akoudanilo@gmail.com>\n"
+                          +"Aurelien Aptel <aurelien.aptel@gmail.com>")
+        info.Description = "Diff, compare and debug SMB traffic. This is the GUI version of smbcmp."
+        info.WebSite = ("https://smbcmp.github.io", "Project homepage")
+        info.Developers = ["RMPR", "Aurelien Aptel"]
+        info.License = "GNU General Public License V3"
         wx.adv.AboutBox(info)
 
     def __set_properties(self):

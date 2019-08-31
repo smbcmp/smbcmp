@@ -11,7 +11,7 @@ setup(
     description='Diff and compare SMB network captures',
     long_description=long_description,
     long_description_content_type="text/markdown",    
-    url="https://github.com/aaptel/smbcmp/",
+    url="https://github.com/smbcmp/smbcmp/",
     packages=find_packages(),
     install_requires=['curses'],
     scripts=[
