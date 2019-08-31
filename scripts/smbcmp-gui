@@ -157,6 +157,12 @@ class MainFrame(wx.Frame):
             self.lpanel.set_data(ARGS.filea)
         if ARGS.fileb:
             self.rpanel.set_data(ARGS.fileb)
+
+        if ARGS.mode == 'text':
+            self.bbuffer.diff_method = DIFFLIB
+        elif ARGS.mode == 'pdml':
+            self.bbuffer.diff_method = PDML
+
         if ARGS.filea and ARGS.fileb:
             self.refresh()
 
