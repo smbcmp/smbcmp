@@ -24,7 +24,7 @@ If you are interested in the wxWidget-based version of the UI you will also need
 
 ### smbcmp
 
-There are no packages for now packages for now so you will need to get the sources:
+There are no packages for now so you will need to get the sources:
 
     $ git clone https://github.com/smbcmp/smbcmp.git
     $ cd smbcmp
