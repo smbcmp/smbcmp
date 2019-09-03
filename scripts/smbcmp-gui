@@ -32,11 +32,13 @@ PDML = 2
 
 ARGS = None
 
+
 def main():
     global ARGS
     ARGS = smbcmp.parse_args(gui=True)
     app = Smbcmp(0)
     app.MainLoop()
+
 
 class TracePanel(wx.Panel):
     """ Panel holding the summaries of the packets """
@@ -47,16 +49,18 @@ class TracePanel(wx.Panel):
         self.nos = [1]
         self.data = []
         self.buffer = wx.ListBox(self, wx.ID_ANY)
+
+        self.search_bar = wx.SearchCtrl(self, wx.ID_ANY, style=wx.TE_PROCESS_ENTER)
+        self.search_index = 0
+        self.found = False
+
         self._reset_items()
         self.debug = []
-        self.__set_properties()
         self.__do_layout()
 
-    def __set_properties(self):
-        pass
-
     def __do_layout(self):
-        sizer_1 = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_1 = wx.BoxSizer(wx.VERTICAL)
+        sizer_1.Add(self.search_bar, 0, wx.ALL | wx.EXPAND, 5)
         sizer_1.Add(self.buffer, 1, wx.ALL | wx.EXPAND, 5)
         self.SetSizer(sizer_1)
         sizer_1.Fit(self)
@@ -74,6 +78,7 @@ class TracePanel(wx.Panel):
             return
 
         self.buffer.InsertItems(items=self.data, pos=0)
+        self.search_bar.AutoComplete(choices=self.data)
         self.buffer.SetSelection(0)
 
     def set_data(self, file_path):
@@ -83,6 +88,38 @@ class TracePanel(wx.Panel):
         self.nos = sorted(pkts.keys())
         self.data = [pkts[x] for x in self.nos]
         self._reset_items()
+
+    def search(self, text, rec=True):
+        """ Cyclic search inside summaries
+
+        Keyword arguments:
+
+        text -- expression searched
+        rec -- keep track of recursive calls
+        """
+        sel = self.buffer.GetSelection()
+
+        if rec:
+            self.search_index = sel
+        else:
+            self.search_index = -1
+
+        for i in range(self.search_index + 1, len(self.data) + 1):
+            #  edge case : The last packet is selected
+            if i >= len(self.data):
+                self.found = False
+                break
+
+            self.found = text.lower() in self.data[i].lower()
+            if self.found:
+                self.search_index = i
+                break
+
+        if not self.found:
+            if rec:
+                self.search(text, rec=False)
+        else:
+            self.buffer.SetSelection(self.search_index)
 
     @property
     def cap(self):
@@ -123,7 +160,6 @@ class TracePanel(wx.Panel):
         if sel_self >= 0:
             panel.buffer.SetSelection(sel_self)
 
-
     def move(self, direction):
         selected = self.buffer.GetSelection()
         if direction + 1:   # From top to bottom
@@ -144,7 +180,7 @@ class MainFrame(wx.Frame):
         self.bbuffer = DiffCtrl(self, wx.ID_ANY)
         self.__set_properties()
         self.__do_layout()
-        self.SetSize(1000,800)
+        self.SetSize(1000, 800)
         self.create_menu()
 
         self.rpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
@@ -152,6 +188,23 @@ class MainFrame(wx.Frame):
         self.lpanel.buffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
         self.lpanel.buffer.Bind(wx.EVT_LISTBOX, self.on_summary_change)
         self.bbuffer.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.Bind(
+            event=wx.EVT_SEARCHCTRL_SEARCH_BTN,
+            handler=self.on_search_l,
+            source=self.lpanel.search_bar)
+        self.Bind(
+            event=wx.EVT_TEXT_ENTER,
+            handler=self.on_search_l,
+            source=self.lpanel.search_bar)
+
+        self.Bind(
+            event=wx.EVT_TEXT_ENTER,
+            handler=self.on_search_r,
+            source=self.rpanel.search_bar)
+        self.Bind(
+            event=wx.EVT_SEARCHCTRL_SEARCH_BTN,
+            handler=self.on_search_r,
+            source=self.rpanel.search_bar)
 
         if ARGS.filea:
             self.lpanel.set_data(ARGS.filea)
@@ -164,6 +217,18 @@ class MainFrame(wx.Frame):
             self.bbuffer.diff_method = PDML
 
         if ARGS.filea and ARGS.fileb:
+            self.refresh()
+
+    def on_search_l(self, event):
+        text = event.GetString()
+        if event:
+            self.lpanel.search(text)
+            self.refresh()
+
+    def on_search_r(self, event):
+        text = event.GetString()
+        if event:
+            self.rpanel.search(text)
             self.refresh()
 
     def on_summary_change(self, event):
@@ -193,6 +258,10 @@ class MainFrame(wx.Frame):
             self.bbuffer.move(+1)
         elif keycode == ord("N"):
             self.bbuffer.move(-1)
+
+        elif keycode == wx.WXK_F3:
+            self.lpanel.search(self.lpanel.search_bar.GetValue())
+            self.rpanel.search(self.rpanel.search_bar.GetValue())
 
         else:
             event.Skip()
@@ -336,7 +405,7 @@ class MainFrame(wx.Frame):
                           +"Aurelien Aptel <aurelien.aptel@gmail.com>")
         info.Description = "Diff, compare and debug SMB traffic. This is the GUI version of smbcmp."
         info.WebSite = ("https://smbcmp.github.io", "Project homepage")
-        info.Developers = ["RMPR", "Aurelien Aptel"]
+        info.Developers = ["Mairo Paul Rufus", "Aurelien Aptel"]
         info.License = "GNU General Public License V3"
         wx.adv.AboutBox(info)
 
@@ -353,6 +422,7 @@ class MainFrame(wx.Frame):
         self.SetSizer(main_sizer)
         main_sizer.Fit(self)
         self.Layout()
+
 
 class DiffCtrl(wx.Panel):
     def __init__(self, *args, **kwargs):
