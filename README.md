@@ -38,6 +38,9 @@ directory).
 
     echo -e '#!/bin/sh\nset -e\ncd <DIR>\nPYTHONPATH=$(pwd) scripts/smbcmp "$@"' > ~/bin/smbcmp && chmod +x ~/bin/smbcmp
 
+For the GUI
+
+    echo -e '#!/bin/sh\nset -e\ncd <DIR>\nPYTHONPATH=$(pwd) scripts/smbcmp-gui "$@"' > ~/bin/smbcmp-gui && chmod +x ~/bin/smbcmp-gui
 
 Usage
 =====
