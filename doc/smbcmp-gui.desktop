@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=smbcmp-gui
+Comment=Launches the GUI for smbcmp, the utility to diff, compare and debug SMB network traces.
+Icon=utilities-terminal
+Terminal=false
+Exec=smbcmp-gui
+Categories=Utility;FileTools
