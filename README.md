@@ -36,11 +36,11 @@ Assuming you have `~/bin` in your `PATH` env var, you can run this to
 add a simple launcher (replace `<DIR>` by the path to the git
 directory).
 
-    echo -e '#!/bin/sh\nset -e\ncd <DIR>\nPYTHONPATH=$(pwd) scripts/smbcmp "$@"' > ~/bin/smbcmp && chmod +x ~/bin/smbcmp
+    echo -e '#!/bin/sh\nset -e\nd=<DIR>\nPYTHONPATH=$d $d/scripts/smbcmp "$@"' > ~/bin/smbcmp && chmod +x ~/bin/smbcmp
 
 For the GUI
 
-    echo -e '#!/bin/sh\nset -e\ncd <DIR>\nPYTHONPATH=$(pwd) scripts/smbcmp-gui "$@"' > ~/bin/smbcmp-gui && chmod +x ~/bin/smbcmp-gui
+    echo -e '#!/bin/sh\nset -e\nd=<DIR>\nPYTHONPATH=$d $d/scripts/smbcmp-gui "$@"' > ~/bin/smbcmp-gui && chmod +x ~/bin/smbcmp-gui
 
 Usage
 =====
