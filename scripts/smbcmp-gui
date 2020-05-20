@@ -20,12 +20,22 @@
 
 import re
 import functools
+import sys
 
 import wx
 import wx.stc
 import wx.adv
 import wx.lib.mixins.listctrl
-import smbcmp
+
+try:
+    import smbcmp
+except ImportError:
+    from pathlib import Path
+    path = str(Path(Path(__file__).parent.absolute()).parent.absolute())
+    sys.path.insert(0, path)
+    import smbcmp
+
+
 
 DIFFLIB = 1
 PDML = 2
