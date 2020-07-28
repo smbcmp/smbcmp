@@ -96,13 +96,14 @@ def strip_packet_no(arg):
 
 def split_packet_arg(arg):
     try:
-        m = re.match(r'^(.+):(\d+)$', arg)
+        m = re.match(r'^(.+?)(?::(\d+))?$', arg)
         fn = m.group(1)
-        no = int(m.group(2))
+        no = None
+        if m.group(2):
+            no = int(m.group(2))
         return (fn, no)
     except Exception:
         raise Exception("invalid packet:no specified")
-
 
 def extract_kernel_keys(log):
     r = {}
