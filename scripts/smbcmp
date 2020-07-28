@@ -132,10 +132,16 @@ def diff_view_main(stdscr, args):
 
     # h, w, y, x
     lwin = curses.newwin(th, lw, 0, 0)
-    lbuf = TraceViewer(lwin, smbcmp.strip_packet_no(args.filea))
+    lcap, lno = smbcmp.split_packet_arg(args.filea)
+    lbuf = TraceViewer(lwin, lcap)
+    if lno:
+        lbuf.select_packet_no(lno)
 
     rwin = curses.newwin(th, rw, 0, lw+1)
-    rbuf = TraceViewer(rwin, smbcmp.strip_packet_no(args.fileb))
+    rcap, rno = smbcmp.split_packet_arg(args.fileb)
+    rbuf = TraceViewer(rwin, rcap)
+    if rno:
+        rbuf.select_packet_no(rno)
 
     pdml = args.mode == 'pdml'
     resize = False
