@@ -260,6 +260,16 @@ class BufferViewer(object):
     def is_cursor_at_top(self):
         return self.cursor == self.top
 
+    def set_cursor(self, n):
+        if n < 0:
+            n = 0
+        elif n >= len(self.lines):
+            n = len(self.lines)-1
+
+        if not (self.top <= n < self.top+self.height()):
+            self.top = n
+        self.cursor = n
+
     def move(self, direction):
         if direction > 0 and self.cursor < len(self.lines)-1:
             if self.is_cursor_at_bot():
@@ -413,6 +423,14 @@ class TraceViewer(object):
 
     def is_empty(self):
         return len(self.nos) == 0
+
+    def select_packet_no(self, no):
+        try:
+            line = self.nos.index(no)
+        except ValueError:
+            line = None
+        if line:
+            self.buf.set_cursor(line)
 
     def get_packet(self):
         return (self.cap, self.nos[self.buf.cursor])
