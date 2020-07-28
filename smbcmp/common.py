@@ -203,7 +203,9 @@ def multiline_mod(a, b, ignored=False):
 def smb_diff(a, b, gui=False):
     lines = difflib.unified_diff(smb_packet(a[0], a[1]).split("\n"),
                                  smb_packet(b[0], b[1]).split("\n"),
-                                 a[0], b[0], lineterm="")
+                                 "%s #%d"%(a[0], a[1]),
+                                 "%s #%d"%(b[0], b[1]),
+                                 lineterm="")
     if gui:
         return list(lines)
     return "\n".join(lines)
